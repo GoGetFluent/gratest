@@ -327,47 +327,86 @@
     player.invulnUntil = performance.now() + 1200; // 1.2s nietykalności
   }
 
+function isWalkableTile(tx, ty){
+  if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return false;
+  return map[ty][tx] !== 1;
+}
+
+function hasLineOfSight(ax,ay,bx,by){
+  // tylko linia prosta (korytarze)
+  if (ax !== bx && ay !== by) return false;
+
+  const dx = Math.sign(bx-ax);
+  const dy = Math.sign(by-ay);
+  let x = ax, y = ay;
+
+  while (x !== bx || y !== by){
+    if (map[y][x] === 1) return false;
+    x += dx; y += dy;
+  }
+  return true;
+}
+
+
+  
   function updateGuards(dt){
-    for (const g of guards){
-      // proste AI: idź prosto, czasem skręć
-      g.changeTimer -= dt;
-      if (g.changeTimer <= 0){
-        g.changeTimer = 0.7 + Math.random()*0.9;
+  const px = Math.floor(player.x / TILE);
+  const py = Math.floor(player.y / TILE);
 
-        // 70%: losowy skręt, 30%: lekkie "podążanie" za graczem (ale bez pathfind)
-        if (Math.random() < 0.30){
-          const dx = (player.x - g.x);
-          const dy = (player.y - g.y);
-          if (Math.abs(dx) > Math.abs(dy)){
-            g.dirX = Math.sign(dx) || g.dirX;
-            g.dirY = 0;
-          } else {
-            g.dirY = Math.sign(dy) || g.dirY;
-            g.dirX = 0;
-          }
-        } else {
-          const dirs = [
-            {x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}
-          ];
-          const d = dirs[randInt(0,3)];
-          g.dirX = d.x; g.dirY = d.y;
-        }
+  for (const g of guards){
+    const gx = Math.floor(g.x / TILE);
+    const gy = Math.floor(g.y / TILE);
+
+    // --- AGRO: widzi gracza w korytarzu ---
+    if (hasLineOfSight(gx,gy,px,py)){
+      g.dirX = Math.sign(px - gx);
+      g.dirY = Math.sign(py - gy);
+
+      // tylko jedna oś
+      if (Math.abs(px-gx) > Math.abs(py-gy)){
+        g.dirY = 0;
+      } else {
+        g.dirX = 0;
       }
+    }
+    // --- PATROL ---
+    else if (Math.random() < 0.02){
+      const dirs = [
+        {x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}
+      ];
+      const valid = dirs.filter(d =>
+        isWalkableTile(gx + d.x, gy + d.y)
+      );
+      if (valid.length){
+        const d = valid[Math.floor(Math.random()*valid.length)];
+        g.dirX = d.x;
+        g.dirY = d.y;
+      }
+    }
 
-      g.vx = g.dirX * g.speed;
-      g.vy = g.dirY * g.speed;
+    g.vx = g.dirX * g.speed;
+    g.vy = g.dirY * g.speed;
 
-      const beforeX = g.x, beforeY = g.y;
-      moveRectWithCollision(g, dt);
+    const beforeX = g.x, beforeY = g.y;
+    moveRectWithCollision(g, dt);
 
-      // jeśli utknął przy ścianie, odbij
-      if (Math.abs(g.x - beforeX) < 0.001 && Math.abs(g.y - beforeY) < 0.001){
-        g.dirX *= -1;
-        g.dirY *= -1;
-        g.changeTimer = 0.25;
+    // --- jeśli utknął → natychmiast zmień kierunek ---
+    if (Math.abs(g.x - beforeX) < 0.01 && Math.abs(g.y - beforeY) < 0.01){
+      const dirs = [
+        {x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}
+      ];
+      const valid = dirs.filter(d =>
+        isWalkableTile(gx + d.x, gy + d.y)
+      );
+      if (valid.length){
+        const d = valid[Math.floor(Math.random()*valid.length)];
+        g.dirX = d.x;
+        g.dirY = d.y;
       }
     }
   }
+}
+
 
   function checkGuardHits(){
     const now = performance.now();
@@ -388,18 +427,20 @@
   }
 
   // ======= Tekstury: podłoga, regały, atrament =======
-  function drawFloor(px,py,x,y){
-    // bazowa posadzka
-    ctx.fillStyle = "#0b1230";
-    ctx.fillRect(px,py,TILE,TILE);
+function drawFloor(px,py,x,y){
+  // ciemna zieleń – biblioteka
+  ctx.fillStyle = "#0e2a1c";
+  ctx.fillRect(px,py,TILE,TILE);
 
-    // delikatna kratka / "kamień"
-    ctx.fillStyle = ((x+y)&1) ? "#0a1029" : "#0c1638";
-    ctx.fillRect(px+2,py+2,6,6);
+  // subtelna faktura
+  ctx.fillStyle = ((x+y)&1) ? "#0c2418" : "#123422";
+  ctx.fillRect(px+2,py+2,6,6);
 
-    ctx.fillStyle = "rgba(255,255,255,0.03)";
-    ctx.fillRect(px+14,py+4,8,2);
-    ctx.fillRect(px+4,py+16,10,2);
+  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  ctx.fillRect(px+14,py+5,7,2);
+  ctx.fillRect(px+5,py+16,9,2);
+}
+
   }
 
   function drawShelf(px,py,x,y){
@@ -433,7 +474,7 @@
   function drawInk(px,py,x,y){
     drawFloor(px,py,x,y);
     // plama atramentu
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
     ctx.beginPath();
     ctx.ellipse(px+12, py+14, 10, 7, 0, 0, Math.PI*2);
     ctx.fill();
