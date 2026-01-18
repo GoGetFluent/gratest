@@ -1,171 +1,973 @@
 <!doctype html>
 <html lang="pl">
 <head>
-<meta charset="utf-8">
-<title>Pixelowa Biblioteka – Arcade</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-:root{color-scheme:dark}
-body{margin:0;background:#050a07;font-family:system-ui}
-.wrap{display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px}
-.hud{width:min(1100px,96vw);display:flex;gap:10px;flex-wrap:wrap;color:#eafff2;margin-bottom:10px}
-.pill{background:#0e2a1c;border:1px solid #1f5a3b;border-radius:999px;padding:6px 12px}
-canvas{width:min(1100px,96vw);aspect-ratio:16/10;image-rendering:pixelated;
-border-radius:18px;border:1px solid #1f5a3b;background:#0b2418;
-box-shadow:0 20px 60px rgba(0,0,0,.6)}
-button{background:#0e2a1c;color:#eafff2;border:1px solid #1f5a3b;
-border-radius:10px;padding:6px 10px;cursor:pointer}
-button:hover{filter:brightness(1.15)}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bibliotekarz Pixel — Arcade Library (pełna wersja)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background:#050906; font-family: system-ui, Arial; }
+    .wrap { display:flex; min-height:100vh; align-items:center; justify-content:center; padding:18px; }
+    .hud {
+      width: min(1100px, 96vw);
+      display:flex; align-items:center; justify-content:space-between;
+      color:#eafff2; margin-bottom:10px; gap:10px; flex-wrap:wrap;
+    }
+    .pill{
+      background:#0f2b1d; border:1px solid #1f5a3b; border-radius:999px;
+      padding:7px 11px; font-size:14px;
+    }
+    canvas{
+      width: min(1100px, 96vw);
+      aspect-ratio: 16 / 10;
+      image-rendering: pixelated;
+      border-radius:18px;
+      border:1px solid #1f5a3b;
+      background:#0b2418;
+      box-shadow:0 18px 55px rgba(0,0,0,.60);
+      display:block;
+    }
+    button{
+      cursor:pointer; border-radius:12px; border:1px solid #1f5a3b;
+      background:#0f2b1d; color:#eafff2; padding:9px 11px;
+    }
+    button:hover{ filter:brightness(1.15); }
+    .hint{ opacity:.9 }
+  </style>
 </head>
 <body>
-<div class="wrap">
-<div>
-<div class="hud">
-<div class="pill">📚 <span id="score">0</span>/<span id="total">0</span></div>
-<div class="pill">❤️ <span id="lives">3</span></div>
-<div class="pill">⏱ <span id="time">0.0</span>s</div>
-<div class="pill">WASD / strzałki · Shift sprint · R restart</div>
-<button onclick="reset(true)">Restart</button>
-</div>
-<canvas id="game" width="960" height="600"></canvas>
-</div>
-</div>
+  <div class="wrap">
+    <div>
+      <div class="hud">
+        <div class="pill"><b>📚 Książki:</b> <span id="score">0</span>/<span id="total">0</span></div>
+        <div class="pill"><b>❤️ Życia:</b> <span id="lives">3</span></div>
+        <div class="pill"><b>⏱ Czas:</b> <span id="time">0.0</span>s</div>
+        <div class="pill hint">WASD / strzałki • Shift sprint • R restart • P pauza</div>
+        <button id="restart">Restart</button>
+      </div>
+      <canvas id="game" width="960" height="600"></canvas>
+    </div>
+  </div>
 
 <script>
-const c=document.getElementById("game"),ctx=c.getContext("2d");
-const scoreEl=score=document.getElementById("score"),
-totalEl=document.getElementById("total"),
-livesEl=document.getElementById("lives"),
-timeEl=document.getElementById("time");
+(() => {
+  // ==========================================================
+  //  Bibliotekarz Pixel — pełniejsza gra: tekstury, AI, przeszkody
+  // ==========================================================
 
-const TILE=24, MAP_W=40, MAP_H=25;
-let map=[], books=[], guards=[];
-let score=0,lives=3,startTime=0,lastT=0,running=true;
+  // ===== Canvas / UI
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
 
-const keys=new Set();
-onkeydown=e=>{keys.add(e.key.toLowerCase());if(e.key==="r")reset(true)};
-onkeyup=e=>keys.delete(e.key.toLowerCase());
+  const scoreEl = document.getElementById("score");
+  const totalEl = document.getElementById("total");
+  const livesEl = document.getElementById("lives");
+  const timeEl  = document.getElementById("time");
+  document.getElementById("restart").addEventListener("click", () => reset(true));
 
-const player={x:48,y:48,w:16,h:18,speed:160,inv:0,vx:0,vy:0};
+  // ===== Stałe świata
+  const TILE = 24;
+  const MAP_W = 40; // 40*24 = 960
+  const MAP_H = 25; // 25*24 = 600
 
-function rand(a,b){return Math.floor(Math.random()*(b-a+1))+a}
-function tile(px,py){return map[Math.floor(py/TILE)]?.[Math.floor(px/TILE)]??1}
-function wall(px,py){return tile(px,py)===1||tile(px,py)===3}
-function overlap(a,b){return a.x<a.w+b.x&&a.x+a.w>b.x&&a.y<a.h+b.y&&a.y+a.h>b.y}
+  // Tile IDs:
+  // 0 = podłoga
+  // 1 = regał (ściana)
+  // 2 = atrament (spowalnia)
+  // 3 = stół (blokuje ruch, nie blokuje "wzroku")
+  const T_FLOOR = 0, T_SHELF = 1, T_INK = 2, T_TABLE = 3;
 
-function buildMap(){
-map=Array.from({length:MAP_H},()=>Array(MAP_W).fill(0));
-for(let x=0;x<MAP_W;x++){map[0][x]=1;map[MAP_H-1][x]=1}
-for(let y=0;y<MAP_H;y++){map[y][0]=1;map[y][MAP_W-1]=1}
-for(let y=4;y<MAP_H;y+=4)
-for(let x=2;x<MAP_W-2;x++)
-if(x%8)map[y][x]=map[y+1]?.[x]=1;
+  // Balans (arcade)
+  const BOOK_COUNT = 16;
+  const START_LIVES = 3;
 
-for(let i=0;i<10;i++){let x=rand(2,MAP_W-3),y=rand(2,MAP_H-3);
-if(!map[y][x])map[y][x]=3}
+  // ===== Stan gry
+  let map = [];
+  let books = [];
+  let guards = [];
+  let particles = [];
 
-for(let i=0;i<14;i++){let x=rand(2,MAP_W-3),y=rand(2,MAP_H-3);
-if(!map[y][x])map[y][x]=2}
-}
+  let score = 0;
+  let lives = START_LIVES;
 
-function placeBooks(){
-books=[];score=0;
-totalEl.textContent=14;
-while(books.length<14){
-let x=rand(2,MAP_W-3),y=rand(2,MAP_H-3);
-if(map[y][x]===0&&!books.some(b=>b.x===x&&b.y===y))
-books.push({x,y,c:0});
-}
-}
+  let startTime = 0;
+  let lastT = 0;
+  let running = true;
+  let paused = false;
 
-function placeGuards(){
-guards=[];
-const types=[
-{t:"normal",s:120},
-{t:"fast",s:170},
-{t:"scout",s:110}
-];
-for(let i=0;i<6;i++){
-let x=rand(10,MAP_W-10),y=rand(5,MAP_H-5);
-guards.push({
-x:x*TILE+4,y:y*TILE+4,w:16,h:16,
-vx:0,vy:0,dir:rand(0,3),
-...types[i%3]
-});
-}
-}
+  // ===== Sterowanie
+  const keys = new Set();
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if (["arrowup","arrowdown","arrowleft","arrowright","w","a","s","d","r","shift","p"].includes(k)) e.preventDefault();
+    keys.add(k);
+    if (k === "r") reset(true);
+    if (k === "p") paused = !paused;
+  });
+  window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
-function reset(full){
-buildMap();placeBooks();placeGuards();
-player.x=48;player.y=48;player.inv=0;
-lives=3;livesEl.textContent=lives;
-if(full){startTime=performance.now();lastT=startTime}
-running=true;
-}
+  // ===== Pomocnicze
+  function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  function now(){ return performance.now(); }
 
-function move(o,dt){
-o.x+=o.vx*dt;if(wall(o.x,o.y)||wall(o.x+o.w,o.y+o.h))o.x-=o.vx*dt;
-o.y+=o.vy*dt;if(wall(o.x,o.y)||wall(o.x+o.w,o.y+o.h))o.y-=o.vy*dt;
-}
+  function rectsOverlap(ax,ay,aw,ah, bx,by,bw,bh){
+    return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+  }
 
-function updatePlayer(dt){
-let dx=(keys.has("a")||keys.has("arrowleft"))*-1+(keys.has("d")||keys.has("arrowright"));
-let dy=(keys.has("w")||keys.has("arrowup"))*-1+(keys.has("s")||keys.has("arrowdown"));
-if(dx||dy){let l=Math.hypot(dx,dy);dx/=l;dy/=l}
-let sp=player.speed+(keys.has("shift")?70:0);
-if(tile(player.x+8,player.y+9)===2)sp*=0.55;
-player.vx=dx*sp;player.vy=dy*sp;
-move(player,dt);
-}
+  // ===== Gracz (bibliotekarz z okularami)
+  const player = {
+    x: 2*TILE,
+    y: 2*TILE,
+    w: 16,
+    h: 18,
+    baseSpeed: 160,
+    sprintBonus: 80,
+    vx: 0,
+    vy: 0,
+    invulnUntil: 0
+  };
 
-function updateGuards(dt){
-for(const g of guards){
-if(Math.random()<0.02)g.dir=rand(0,3);
-const dirs=[[1,0],[-1,0],[0,1],[0,-1]][g.dir];
-g.vx=dirs[0]*g.s;g.vy=dirs[1]*g.s;
-move(g,dt);
-if(Math.random()<0.01)g.dir=rand(0,3);
-if(overlap(player,g)&&performance.now()>player.inv){
-lives--;livesEl.textContent=lives;
-player.inv=performance.now()+1000;
-player.x=48;player.y=48;
-if(lives<=0)running=false;
-}
-}
-}
+  // ==========================================================
+  //  MAP GENERATION — mniej monotonii: pokoje + korytarze
+  // ==========================================================
 
-function draw(){
-ctx.clearRect(0,0,c.width,c.height);
-for(let y=0;y<MAP_H;y++)for(let x=0;x<MAP_W;x++){
-let px=x*TILE,py=y*TILE;
-ctx.fillStyle=["#123a26","#6b4a2b","#000","#2b2b2b"][map[y][x]]||"#0e2a1c";
-ctx.fillRect(px,py,TILE,TILE);
-}
-for(const b of books)if(!b.c){
-ctx.fillStyle="#f1c40f";
-ctx.fillRect(b.x*TILE+6,b.y*TILE+6,12,14);
-}
-for(const g of guards){
-ctx.fillStyle=g.t==="fast"?"#ff7675":g.t==="scout"?"#9b59b6":"#e74c3c";
-ctx.fillRect(g.x,g.y,16,16);
-}
-if(performance.now()>player.inv||Math.floor(performance.now()/120)%2)
-{ctx.fillStyle="#2ecc71";ctx.fillRect(player.x,player.y,16,18)}
-}
+  function makeEmptyMap(){
+    map = Array.from({length: MAP_H}, () => Array(MAP_W).fill(T_SHELF));
+  }
 
-function loop(t){
-const dt=Math.min(0.033,(t-lastT)/1000);lastT=t;
-if(running){
-updatePlayer(dt);updateGuards(dt);
-for(const b of books)if(!b.c&&overlap(player,{x:b.x*TILE,y:b.y*TILE,w:16,h:16})){
-b.c=1;score++;scoreEl.textContent=score;if(score==14)running=false}
-timeEl.textContent=((t-startTime)/1000).toFixed(1);
-}
-draw();requestAnimationFrame(loop);
-}
+  function carveRoom(x, y, w, h){
+    for (let yy=y; yy<y+h; yy++){
+      for (let xx=x; xx<x+w; xx++){
+        if (xx<=0 || yy<=0 || xx>=MAP_W-1 || yy>=MAP_H-1) continue;
+        map[yy][xx] = T_FLOOR;
+      }
+    }
+  }
 
-reset(true);requestAnimationFrame(loop);
+  function carveCorridor(x1,y1,x2,y2){
+    // L-korytarz (najpierw w poziomie, potem pion)
+    const dx = Math.sign(x2-x1);
+    const dy = Math.sign(y2-y1);
+
+    let x = x1, y = y1;
+    while (x !== x2){
+      if (x>0 && x<MAP_W-1 && y>0 && y<MAP_H-1) map[y][x] = T_FLOOR;
+      // poszerzenie korytarza o 1 kafelek czasem
+      if ((x+y) % 5 === 0 && y+1 < MAP_H-1) map[y+1][x] = T_FLOOR;
+      x += dx;
+    }
+    while (y !== y2){
+      if (x>0 && x<MAP_W-1 && y>0 && y<MAP_H-1) map[y][x] = T_FLOOR;
+      if ((x+y) % 6 === 0 && x+1 < MAP_W-1) map[y][x+1] = T_FLOOR;
+      y += dy;
+    }
+    map[y2][x2] = T_FLOOR;
+  }
+
+  function generateLibrary(){
+    makeEmptyMap();
+
+    // Stała ramka regałów jest "naturalnie" (bo wszędzie shelves)
+    // Wyrzeźbimy kilka pokoi + połączymy je korytarzami
+    const rooms = [];
+    const ROOM_COUNT = 7;
+
+    for (let i=0;i<ROOM_COUNT;i++){
+      const w = randInt(7, 12);
+      const h = randInt(5, 9);
+      const x = randInt(2, MAP_W - w - 3);
+      const y = randInt(2, MAP_H - h - 3);
+      carveRoom(x,y,w,h);
+      rooms.push({x,y,w,h, cx: Math.floor(x+w/2), cy: Math.floor(y+h/2)});
+    }
+
+    // Połącz pokoje
+    rooms.sort((a,b)=>a.cx-b.cx);
+    for (let i=0;i<rooms.length-1;i++){
+      carveCorridor(rooms[i].cx, rooms[i].cy, rooms[i+1].cx, rooms[i+1].cy);
+    }
+
+    // Dodaj kilka "otwartych" pasów (hala z regałami)
+    // w środku mapy, żeby przypominało bibliotekę
+    const bandYs = [6, 10, 14, 18];
+    for (const by of bandYs){
+      for (let x=2; x<MAP_W-2; x++){
+        // rzadkie przerwy
+        if (x % 9 === 0 || x % 13 === 0) continue;
+        // tylko jeśli okolica jest już podłogą (żeby nie zamurować całych pokoi)
+        if (map[by][x] === T_FLOOR){
+          map[by][x] = T_SHELF;
+          if (by+1 < MAP_H-1 && map[by+1][x] === T_FLOOR) map[by+1][x] = T_SHELF;
+        }
+      }
+    }
+
+    // Upewnij się, że start jest przechodni
+    carveRoom(1,1,6,6);
+
+    // Stoły (blokują ruch), rozrzucone w pokojach
+    placeTables(14);
+
+    // Atrament (spowalnia), rozrzucony w korytarzach/pokojach
+    placeInk(16);
+
+    // Drobne "poszerzenia" przejść żeby było arcade-friendly
+    softenChokepoints();
+  }
+
+  function softenChokepoints(){
+    // Przejdź i jeśli masz wąskie gardło 1-kafelkowe, czasem poszerz
+    for (let y=2; y<MAP_H-2; y++){
+      for (let x=2; x<MAP_W-2; x++){
+        if (map[y][x] !== T_FLOOR) continue;
+        const walls =
+          (map[y-1][x]===T_SHELF) + (map[y+1][x]===T_SHELF) + (map[y][x-1]===T_SHELF) + (map[y][x+1]===T_SHELF);
+        if (walls >= 3 && Math.random() < 0.25){
+          // przebij jedną ścianę obok
+          const dirs = [
+            {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}
+          ];
+          const shuffled = dirs.sort(()=>Math.random()-0.5);
+          for (const d of shuffled){
+            if (map[y+d.dy][x+d.dx] === T_SHELF){
+              map[y+d.dy][x+d.dx] = T_FLOOR;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function randomFloorTileFarFrom(tx0,ty0, minManhattan){
+    for (let tries=0; tries<8000; tries++){
+      const tx = randInt(1, MAP_W-2);
+      const ty = randInt(1, MAP_H-2);
+      if (map[ty][tx] !== T_FLOOR) continue;
+      const d = Math.abs(tx-tx0)+Math.abs(ty-ty0);
+      if (d < minManhattan) continue;
+      return {tx,ty};
+    }
+    return {tx:2,ty:2};
+  }
+
+  function placeTables(count){
+    let placed = 0;
+    let tries = 0;
+    while (placed < count && tries < 10000){
+      tries++;
+      const tx = randInt(2, MAP_W-3);
+      const ty = randInt(2, MAP_H-3);
+      if (map[ty][tx] !== T_FLOOR) continue;
+
+      // nie tuż przy starcie
+      if (Math.abs(tx-2)+Math.abs(ty-2) < 7) continue;
+
+      // zostaw przejścia (unikaj zasypania korytarzy)
+      const floorAround =
+        (map[ty-1][tx]===T_FLOOR) + (map[ty+1][tx]===T_FLOOR) + (map[ty][tx-1]===T_FLOOR) + (map[ty][tx+1]===T_FLOOR);
+      if (floorAround <= 1) continue;
+
+      map[ty][tx] = T_TABLE;
+      placed++;
+    }
+  }
+
+  function placeInk(count){
+    let placed = 0;
+    let tries = 0;
+    while (placed < count && tries < 12000){
+      tries++;
+      const tx = randInt(2, MAP_W-3);
+      const ty = randInt(2, MAP_H-3);
+      if (map[ty][tx] !== T_FLOOR) continue;
+      if (Math.abs(tx-2)+Math.abs(ty-2) < 8) continue;
+
+      // preferuj korytarze: tam gdzie jest więcej ścian
+      const walls =
+        (map[ty-1][tx]===T_SHELF) + (map[ty+1][tx]===T_SHELF) + (map[ty][tx-1]===T_SHELF) + (map[ty][tx+1]===T_SHELF);
+      if (walls < 2 && Math.random() < 0.7) continue;
+
+      map[ty][tx] = T_INK;
+      placed++;
+    }
+  }
+
+  // ==========================================================
+  //  ENTITY PLACEMENT — książki i wrogowie
+  // ==========================================================
+
+  function placeBooks(){
+    books = [];
+    score = 0;
+
+    const startTx = 2, startTy = 2;
+    let tries = 0;
+
+    while (books.length < BOOK_COUNT && tries < 20000){
+      tries++;
+      const tx = randInt(1, MAP_W-2);
+      const ty = randInt(1, MAP_H-2);
+      if (map[ty][tx] !== T_FLOOR) continue;
+      if (Math.abs(tx-startTx)+Math.abs(ty-startTy) < 7) continue;
+      if (books.some(b => b.tx===tx && b.ty===ty)) continue;
+
+      books.push({tx,ty,collected:false, bob: Math.random()*Math.PI*2});
+    }
+
+    totalEl.textContent = BOOK_COUNT;
+    scoreEl.textContent = score;
+  }
+
+  // Wrogowie: 3 typy, więcej sztuk, AI bez blokowania:
+  // - normal: średni, często skręca
+  // - fast: szybszy, bardziej agresywny
+  // - scout: wolniejszy, ale większy zasięg "widzenia"
+  function placeGuards(){
+    guards = [];
+
+    const configs = [
+      {type:"normal", speed:125, turniness:0.06, sight:10},
+      {type:"fast",   speed:165, turniness:0.08, sight:9},
+      {type:"scout",  speed:110, turniness:0.05, sight:14},
+    ];
+
+    const GUARD_COUNT = 6; // arcade
+    for (let i=0;i<GUARD_COUNT;i++){
+      const cfg = configs[i % configs.length];
+      const spawn = randomFloorTileFarFrom(2,2, 16);
+
+      guards.push({
+        x: spawn.tx*TILE + 4,
+        y: spawn.ty*TILE + 4,
+        w: 16,
+        h: 16,
+        vx: 0,
+        vy: 0,
+        speed: cfg.speed,
+        type: cfg.type,
+        turniness: cfg.turniness,
+        sight: cfg.sight,
+        dirX: Math.random()<0.5 ? 1 : -1,
+        dirY: 0,
+        stuckFrames: 0,
+        // "alert" podbija presję po zauważeniu gracza
+        alertUntil: 0
+      });
+    }
+  }
+
+  // ==========================================================
+  //  COLLISION / MOVEMENT
+  // ==========================================================
+
+  function tileAt(tx,ty){
+    if (tx<0 || ty<0 || tx>=MAP_W || ty>=MAP_H) return T_SHELF;
+    return map[ty][tx];
+  }
+
+  function tileAtPixel(px,py){
+    return tileAt(Math.floor(px/TILE), Math.floor(py/TILE));
+  }
+
+  function blocksMovement(tileId){
+    return tileId === T_SHELF || tileId === T_TABLE;
+  }
+
+  function isBlockedAtPixel(px,py){
+    const t = tileAtPixel(px,py);
+    return blocksMovement(t);
+  }
+
+  function moveWithCollision(entity, dt){
+    const nextX = entity.x + entity.vx * dt;
+    const nextY = entity.y + entity.vy * dt;
+
+    // X
+    let nx = nextX;
+    if (entity.vx !== 0){
+      const left   = nx;
+      const right  = nx + entity.w;
+      const top    = entity.y;
+      const bottom = entity.y + entity.h;
+
+      const stepX = entity.vx > 0 ? right : left;
+      if (isBlockedAtPixel(stepX, top) || isBlockedAtPixel(stepX, bottom)){
+        const tx = Math.floor(stepX / TILE);
+        if (entity.vx > 0) nx = tx*TILE - entity.w - 0.01;
+        else nx = (tx+1)*TILE + 0.01;
+      }
+    }
+
+    // Y
+    let ny = nextY;
+    if (entity.vy !== 0){
+      const left   = nx;
+      const right  = nx + entity.w;
+      const top    = ny;
+      const bottom = ny + entity.h;
+
+      const stepY = entity.vy > 0 ? bottom : top;
+      if (isBlockedAtPixel(left, stepY) || isBlockedAtPixel(right, stepY)){
+        const ty = Math.floor(stepY / TILE);
+        if (entity.vy > 0) ny = ty*TILE - entity.h - 0.01;
+        else ny = (ty+1)*TILE + 0.01;
+      }
+    }
+
+    entity.x = nx;
+    entity.y = ny;
+  }
+
+  function playerOnInk(){
+    const cx = player.x + player.w/2;
+    const cy = player.y + player.h/2;
+    return tileAtPixel(cx,cy) === T_INK;
+  }
+
+  // ==========================================================
+  //  AI — line of sight + inteligentny wybór kierunku (bez zaklinania)
+  // ==========================================================
+
+  function isWalkableTile(tx,ty){
+    const t = tileAt(tx,ty);
+    return !blocksMovement(t);
+  }
+
+  function hasLineOfSight(ax,ay,bx,by){
+    // Prosta LOS w linii prostej (korytarze/pokoje).
+    // Stoły NIE blokują wzroku, tylko regały.
+    if (ax !== bx && ay !== by) return false;
+
+    const dx = Math.sign(bx-ax);
+    const dy = Math.sign(by-ay);
+
+    let x = ax, y = ay;
+    while (x !== bx || y !== by){
+      // pomijamy pierwszy kafelek (start), ale sprawdzamy po drodze
+      if (!(x===ax && y===ay)){
+        if (tileAt(x,y) === T_SHELF) return false; // tylko regał
+      }
+      x += dx; y += dy;
+    }
+    return true;
+  }
+
+  function chooseNewDirection(guard){
+    const gx = Math.floor(guard.x / TILE);
+    const gy = Math.floor(guard.y / TILE);
+
+    const dirs = [
+      {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}
+    ];
+
+    // Preferuj kierunki, które nie są cofnięciem (żeby nie drgało),
+    // ale jeśli utknął, pozwól na cokolwiek.
+    const back = {dx:-guard.dirX, dy:-guard.dirY};
+
+    const candidates = dirs
+      .filter(d => isWalkableTile(gx+d.dx, gy+d.dy))
+      .map(d => {
+        // scoring: unikaj cofania, preferuj prosto, plus trochę losowości
+        let score = 0;
+        const isBack = (d.dx===back.dx && d.dy===back.dy);
+        const isStraight = (d.dx===guard.dirX && d.dy===guard.dirY);
+
+        if (isStraight) score += 2.0;
+        if (isBack) score -= (guard.stuckFrames > 6 ? 0.2 : 3.0);
+        score += Math.random()*1.25;
+
+        return {d, score};
+      })
+      .sort((a,b)=>b.score-a.score);
+
+    if (candidates.length){
+      const pick = candidates[0].d;
+      guard.dirX = pick.dx;
+      guard.dirY = pick.dy;
+    } else {
+      // awaryjnie: zawróć
+      guard.dirX = back.dx || 1;
+      guard.dirY = back.dy || 0;
+    }
+  }
+
+  function updateGuards(dt){
+    const px = Math.floor(player.x / TILE);
+    const py = Math.floor(player.y / TILE);
+
+    for (const g of guards){
+      const gx = Math.floor(g.x / TILE);
+      const gy = Math.floor(g.y / TILE);
+
+      // "widzenie": w tej samej linii + brak regałów po drodze + dystans
+      const distMan = Math.abs(px-gx) + Math.abs(py-gy);
+      const canSee = distMan <= g.sight && hasLineOfSight(gx,gy,px,py);
+
+      if (canSee){
+        // alert na chwilę — nawet jeśli straci LOS, jeszcze "ciśnie"
+        g.alertUntil = now() + 900;
+      }
+
+      const alerted = now() < g.alertUntil;
+
+      // jeśli goni, ustaw kierunek na oś z większą różnicą
+      if (alerted){
+        const dx = px - gx;
+        const dy = py - gy;
+
+        if (Math.abs(dx) > Math.abs(dy)){
+          g.dirX = Math.sign(dx) || g.dirX;
+          g.dirY = 0;
+        } else {
+          g.dirY = Math.sign(dy) || g.dirY;
+          g.dirX = 0;
+        }
+
+        // fast ma lekki boost, scout mniejszy
+        const boost = (g.type==="fast") ? 1.12 : (g.type==="scout" ? 1.05 : 1.08);
+        g.vx = g.dirX * g.speed * boost;
+        g.vy = g.dirY * g.speed * boost;
+      } else {
+        // patrol: czasem skręć
+        if (Math.random() < g.turniness){
+          chooseNewDirection(g);
+        }
+        g.vx = g.dirX * g.speed;
+        g.vy = g.dirY * g.speed;
+      }
+
+      const beforeX = g.x, beforeY = g.y;
+      moveWithCollision(g, dt);
+
+      // wykryj "utknięcie": prawie brak ruchu
+      const moved = Math.abs(g.x-beforeX) + Math.abs(g.y-beforeY);
+      if (moved < 0.02){
+        g.stuckFrames++;
+        // natychmiast zmień kierunek, jeśli przyblokowany
+        chooseNewDirection(g);
+      } else {
+        g.stuckFrames = Math.max(0, g.stuckFrames-1);
+      }
+    }
+  }
+
+  // ==========================================================
+  //  GAMEPLAY — zbieranie, trafienia, respawn
+  // ==========================================================
+
+  function spawnParticles(x,y, kind){
+    const n = (kind==="book") ? 14 : 18;
+    for (let i=0;i<n;i++){
+      particles.push({
+        x, y,
+        vx: (Math.random()*2-1) * (kind==="hit" ? 90 : 70),
+        vy: (Math.random()*2-1) * (kind==="hit" ? 90 : 70),
+        life: 0.45 + Math.random()*0.35,
+        kind
+      });
+    }
+  }
+
+  function updateParticles(dt){
+    particles = particles.filter(p => {
+      p.life -= dt;
+      p.x += p.vx*dt;
+      p.y += p.vy*dt;
+      p.vx *= (1 - 2.2*dt);
+      p.vy *= (1 - 2.2*dt);
+      return p.life > 0;
+    });
+  }
+
+  function checkBookPickup(){
+    for (const b of books){
+      if (b.collected) continue;
+
+      const bx = b.tx*TILE + 5;
+      const by = b.ty*TILE + 5;
+      const bw = 14, bh = 14;
+
+      if (rectsOverlap(player.x,player.y,player.w,player.h, bx,by,bw,bh)){
+        b.collected = true;
+        score++;
+        scoreEl.textContent = score;
+        spawnParticles(bx+7, by+7, "book");
+
+        if (score >= BOOK_COUNT){
+          running = false;
+        }
+      }
+    }
+  }
+
+  function respawnPlayer(){
+    player.x = 2*TILE;
+    player.y = 2*TILE;
+    player.vx = 0;
+    player.vy = 0;
+    player.invulnUntil = now() + 1200;
+  }
+
+  function checkGuardHits(){
+    if (now() < player.invulnUntil) return;
+
+    for (const g of guards){
+      if (rectsOverlap(player.x,player.y,player.w,player.h, g.x,g.y,g.w,g.h)){
+        lives--;
+        livesEl.textContent = lives;
+        spawnParticles(player.x + player.w/2, player.y + player.h/2, "hit");
+
+        if (lives <= 0){
+          running = false;
+        } else {
+          respawnPlayer();
+        }
+        return;
+      }
+    }
+  }
+
+  // ==========================================================
+  //  INPUT / MOVEMENT (Player)
+  // ==========================================================
+
+  function updatePlayer(dt){
+    let dx = 0, dy = 0;
+    if (keys.has("w") || keys.has("arrowup")) dy -= 1;
+    if (keys.has("s") || keys.has("arrowdown")) dy += 1;
+    if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
+    if (keys.has("d") || keys.has("arrowright")) dx += 1;
+
+    // normalize (diagonal)
+    if (dx !== 0 || dy !== 0){
+      const len = Math.hypot(dx,dy);
+      dx /= len; dy /= len;
+    }
+
+    const sprint = keys.has("shift");
+    let speed = player.baseSpeed + (sprint ? player.sprintBonus : 0);
+
+    // atrament spowalnia
+    if (playerOnInk()) speed *= 0.55;
+
+    player.vx = dx * speed;
+    player.vy = dy * speed;
+
+    moveWithCollision(player, dt);
+  }
+
+  // ==========================================================
+  //  RENDER — ciemnozielona biblioteka + tekstury
+  // ==========================================================
+
+  function drawFloor(px,py,x,y){
+    // butelkowa zieleń
+    ctx.fillStyle = "#0e2a1c";
+    ctx.fillRect(px,py,TILE,TILE);
+
+    // faktura płytek
+    ctx.fillStyle = ((x+y)&1) ? "#0b2317" : "#123422";
+    ctx.fillRect(px+2,py+2,6,6);
+
+    // subtelne "smugi"
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.fillRect(px+14,py+5,7,2);
+    ctx.fillRect(px+5,py+16,9,2);
+
+    // szew kafelka
+    ctx.fillStyle = "rgba(0,0,0,0.10)";
+    ctx.fillRect(px,py,TILE,1);
+    ctx.fillRect(px,py,1,TILE);
+  }
+
+  function drawShelf(px,py,x,y){
+    // drewno
+    ctx.fillStyle = "#3a2716";
+    ctx.fillRect(px,py,TILE,TILE);
+
+    // półki
+    ctx.fillStyle = "#2a1a10";
+    ctx.fillRect(px,py+4,TILE,3);
+    ctx.fillRect(px,py+12,TILE,3);
+    ctx.fillRect(px,py+20,TILE,2);
+
+    // książki - grzbiety
+    const colors = ["#c0392b","#f39c12","#27ae60","#2980b9","#8e44ad","#ecf0f1"];
+    for (let i=0;i<4;i++){
+      const bx = px + 3 + i*5;
+      const by = py + 6 + ((x+y+i)&1);
+      ctx.fillStyle = colors[(x + y + i*2) % colors.length];
+      ctx.fillRect(bx, by, 3, 6);
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(bx, by, 1, 6);
+    }
+
+    // obramowanie
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(px,py,TILE,2);
+    ctx.fillRect(px,py,2,TILE);
+  }
+
+  function drawTable(px,py,x,y){
+    // blat
+    ctx.fillStyle = "#5c3b1f";
+    ctx.fillRect(px+2, py+6, TILE-4, TILE-10);
+    // nogi
+    ctx.fillStyle = "#3b2615";
+    ctx.fillRect(px+4, py+16, 3, 6);
+    ctx.fillRect(px+TILE-7, py+16, 3, 6);
+
+    // papiery
+    ctx.fillStyle = "#f7f1d5";
+    ctx.fillRect(px+6, py+8, 8, 6);
+    ctx.fillStyle = "rgba(0,0,0,0.12)";
+    ctx.fillRect(px+6, py+11, 8, 1);
+
+    // cień
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(px+2, py+TILE-3, TILE-4, 2);
+  }
+
+  function drawInk(px,py,x,y){
+    drawFloor(px,py,x,y);
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.beginPath();
+    ctx.ellipse(px+12, py+14, 10, 7, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(150,210,170,0.12)";
+    ctx.fillRect(px+6, py+12, 10, 2);
+  }
+
+  function drawBook(b){
+    const x = b.tx*TILE;
+    const y = b.ty*TILE;
+    // delikatne "bujanie"
+    b.bob += 0.08;
+    const bob = Math.sin(b.bob) * 1.2;
+
+    // cień
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(x+7, y+19, 12, 3);
+
+    // okładka
+    ctx.fillStyle = "#f1c40f";
+    ctx.fillRect(x+7, y+6 + bob, 12, 14);
+
+    // grzbiet
+    ctx.fillStyle = "#d35400";
+    ctx.fillRect(x+7, y+6 + bob, 3, 14);
+
+    // kartki
+    ctx.fillStyle = "#fff3cf";
+    ctx.fillRect(x+10, y+8 + bob, 8, 10);
+
+    // pasek tytułu
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(x+10, y+12 + bob, 8, 2);
+  }
+
+  function drawPlayer(){
+    const blinking = now() < player.invulnUntil && Math.floor(now()/120)%2===0;
+    if (blinking) return;
+
+    const px = player.x, py = player.y;
+
+    // cień
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(px+3, py+18, 12, 4);
+
+    // nogi
+    ctx.fillStyle = "#1abc9c";
+    ctx.fillRect(px+3, py+14, 4, 6);
+    ctx.fillRect(px+9, py+14, 4, 6);
+
+    // ciało (sweter)
+    ctx.fillStyle = "#2ecc71";
+    ctx.fillRect(px+2, py+6, 12, 10);
+
+    // głowa
+    ctx.fillStyle = "#f1c27d";
+    ctx.fillRect(px+4, py, 8, 7);
+
+    // włosy
+    ctx.fillStyle = "#2c2c2c";
+    ctx.fillRect(px+4, py, 8, 2);
+
+    // okulary
+    ctx.fillStyle = "#0b0e14";
+    ctx.fillRect(px+4, py+3, 3, 2);
+    ctx.fillRect(px+9, py+3, 3, 2);
+    ctx.fillRect(px+7, py+4, 2, 1); // mostek
+
+    // uśmiech
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(px+7, py+6, 2, 1);
+
+    // książka pod pachą (bibliotekarz vibe)
+    ctx.fillStyle = "#f39c12";
+    ctx.fillRect(px+13, py+9, 3, 7);
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.fillRect(px+13, py+12, 3, 1);
+  }
+
+  function drawGuard(g){
+    // cień
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(g.x+2, g.y+14, 12, 4);
+
+    // kolor zależny od typu
+    let body = "#e74c3c";
+    let accent = "#c0392b";
+    if (g.type === "fast"){ body = "#ff6b6b"; accent = "#c44545"; }
+    if (g.type === "scout"){ body = "#9b59b6"; accent = "#7e3f97"; }
+
+    ctx.fillStyle = body;
+    ctx.fillRect(g.x+2, g.y+2, 12, 12);
+
+    ctx.fillStyle = accent;
+    ctx.fillRect(g.x+2, g.y+10, 12, 4);
+
+    // oczy
+    ctx.fillStyle = "#0b0e14";
+    ctx.fillRect(g.x+5, g.y+6, 2, 2);
+    ctx.fillRect(g.x+10, g.y+6, 2, 2);
+
+    // znacznik "alert" (mała kropka)
+    if (now() < g.alertUntil){
+      ctx.fillStyle = "#f1c40f";
+      ctx.fillRect(g.x+13, g.y+1, 2, 2);
+    }
+  }
+
+  function drawParticles(){
+    for (const p of particles){
+      const a = clamp(p.life / 0.8, 0, 1);
+      if (p.kind === "book") ctx.fillStyle = `rgba(241,196,15,${0.65*a})`;
+      else ctx.fillStyle = `rgba(255,110,110,${0.55*a})`;
+      ctx.fillRect(p.x, p.y, 2, 2);
+    }
+  }
+
+  function drawWorld(){
+    // tło
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // mapa
+    for (let y=0; y<MAP_H; y++){
+      for (let x=0; x<MAP_W; x++){
+        const px = x*TILE, py = y*TILE;
+        const t = map[y][x];
+        if (t === T_SHELF) drawShelf(px,py,x,y);
+        else if (t === T_INK) drawInk(px,py,x,y);
+        else {
+          drawFloor(px,py,x,y);
+          if (t === T_TABLE) drawTable(px,py,x,y);
+        }
+      }
+    }
+
+    // książki
+    for (const b of books){
+      if (!b.collected) drawBook(b);
+    }
+
+    // wrogowie
+    for (const g of guards) drawGuard(g);
+
+    // gracz
+    drawPlayer();
+
+    // particles
+    drawParticles();
+
+    // overlay pauzy / win/lose
+    if (paused){
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = "#eafff2";
+      ctx.font = "24px system-ui, Arial";
+      ctx.fillText("PAUZA", 430, 290);
+      ctx.font = "14px system-ui, Arial";
+      ctx.fillText("Naciśnij P, żeby wrócić", 385, 320);
+    }
+
+    if (!running){
+      ctx.fillStyle = "rgba(0,0,0,0.62)";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      const win = (score >= BOOK_COUNT);
+      ctx.fillStyle = "#eafff2";
+      ctx.font = "26px system-ui, Arial";
+      ctx.fillText(win ? "Zebrane! Biblioteka uratowana 📚" : "Ciii… Złapany! 🤫", 200, 280);
+
+      ctx.font = "15px system-ui, Arial";
+      ctx.fillText("Naciśnij R albo kliknij Restart", 350, 315);
+    }
+  }
+
+  // ==========================================================
+  //  RESET / LOOP
+  // ==========================================================
+
+  function reset(restartTimer=false){
+    generateLibrary();
+
+    player.x = 2*TILE;
+    player.y = 2*TILE;
+    player.vx = player.vy = 0;
+    player.invulnUntil = 0;
+
+    lives = START_LIVES;
+    livesEl.textContent = lives;
+
+    placeBooks();
+    placeGuards();
+
+    particles = [];
+
+    if (restartTimer){
+      startTime = now();
+      lastT = startTime;
+      timeEl.textContent = "0.0";
+    }
+
+    paused = false;
+    running = true;
+  }
+
+  function loop(t){
+    if (!startTime){ startTime = t; lastT = t; }
+
+    const dt = Math.min(0.033, (t - lastT) / 1000);
+    lastT = t;
+
+    if (running && !paused){
+      updatePlayer(dt);
+      updateGuards(dt);
+
+      checkBookPickup();
+      checkGuardHits();
+
+      updateParticles(dt);
+
+      timeEl.textContent = ((t - startTime)/1000).toFixed(1);
+
+      if (lives <= 0) running = false;
+    } else {
+      // nawet w pauzie można lekko animować książki (nie trzeba)
+      updateParticles(dt * 0.6);
+    }
+
+    drawWorld();
+    requestAnimationFrame(loop);
+  }
+
+  // Start
+  reset(true);
+  requestAnimationFrame(loop);
+})();
 </script>
 </body>
 </html>
