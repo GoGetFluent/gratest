@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pixelowa gra: zbieranie książek</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background:#0b0e14; font-family: system-ui, Arial; }
+    .wrap { display:flex; min-height:100vh; align-items:center; justify-content:center; padding:20px; }
+    .hud {
+      width: min(720px, 95vw);
+      display:flex; align-items:center; justify-content:space-between;
+      color:#e8ecff; margin-bottom:10px; gap:12px; flex-wrap:wrap;
+    }
+    .pill{
+      background:#141a2a; border:1px solid #263053; border-radius:999px;
+      padding:6px 10px; font-size:14px;
+    }
+    canvas{
+      width: min(720px, 95vw);
+      aspect-ratio: 16 / 10;
+      image-rendering: pixelated;
+      border-radius:16px;
+      border:1px solid #263053;
+      background:#0f1320;
+      box-shadow: 0 14px 40px rgba(0,0,0,.45);
+      display:block;
+    }
+    .hint { opacity:.85 }
+    button{
+      cursor:pointer; border-radius:10px; border:1px solid #263053;
+      background:#141a2a; color:#e8ecff; padding:8px 10px;
+    }
+    button:hover{ filter:brightness(1.15); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <div class="hud">
+        <div class="pill"><b>Książki:</b> <span id="score">0</span>/<span id="total">0</span></div>
+        <div class="pill"><b>Czas:</b> <span id="time">0.0</span>s</div>
+        <div class="pill hint">Sterowanie: <b>WASD</b> / strzałki • <b>R</b> restart</div>
+        <button id="restart">Restart</button>
+      </div>
+      <canvas id="game" width="640" height="400"></canvas>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  const scoreEl = document.getElementById("score");
+  const totalEl = document.getElementById("total");
+  const timeEl  = document.getElementById("time");
+  document.getElementById("restart").addEventListener("click", () => reset(true));
+
+  // --- Ustawienia "pixel art" ---
+  const TILE = 16;         // rozmiar kafelka w px
+  const MAP_W = 40;        // 40 * 16 = 640
+  const MAP_H = 25;        // 25 * 16 = 400
+
+  // Prosta mapa: 0=podloga, 1=sciana
+  // Zbudujemy ją programowo (ramka + losowe przeszkody)
+  let map = [];
+  let books = [];
+  let totalBooks = 0;
+
+  const player = {
+    x: 2 * TILE,
+    y: 2 * TILE,
+    w: 12,
+    h: 12,
+    speed: 120,   // px/s
+    vx: 0,
+    vy: 0
+  };
+
+  let score = 0;
+  let startTime = 0;
+  let lastT = 0;
+  let running = true;
+
+  const keys = new Set();
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if (["arrowup","arrowdown","arrowleft","arrowright","w","a","s","d","r"].includes(k)) e.preventDefault();
+    keys.add(k);
+    if (k === "r") reset(true);
+  });
+  window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+
+  function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+
+  function buildMap() {
+    map = Array.from({length: MAP_H}, () => Array(MAP_W).fill(0));
+
+    // Ramka
+    for (let x=0;x<MAP_W;x++){ map[0][x]=1; map[MAP_H-1][x]=1; }
+    for (let y=0;y<MAP_H;y++){ map[y][0]=1; map[y][MAP_W-1]=1; }
+
+    // Losowe "biblioteczne regały" (prostokąty ścian)
+    const shelves = 14;
+    for (let i=0;i<shelves;i++){
+      const w = randInt(3,8);
+      const h = randInt(2,5);
+      const x = randInt(2, MAP_W - w - 3);
+      const y = randInt(2, MAP_H - h - 3);
+      for (let yy=y; yy<y+h; yy++){
+        for (let xx=x; xx<x+w; xx++){
+          // zostaw trochę przejść
+          if ((xx+y+yy+i) % 7 !== 0) map[yy][xx] = 1;
+        }
+      }
+    }
+  }
+
+  function placeBooks() {
+    books = [];
+    score = 0;
+    const count = 12;
+    totalBooks = count;
+    totalEl.textContent = totalBooks;
+    scoreEl.textContent = score;
+
+    let tries = 0;
+    while (books.length < count && tries < 5000){
+      tries++;
+      const tx = randInt(1, MAP_W-2);
+      const ty = randInt(1, MAP_H-2);
+      if (map[ty][tx] === 1) continue;
+      // nie stawiaj tuż obok startu
+      const px = Math.floor(player.x / TILE);
+      const py = Math.floor(player.y / TILE);
+      if (Math.abs(tx - px) + Math.abs(ty - py) < 6) continue;
+
+      // unikaj duplikatów
+      if (books.some(b => b.tx===tx && b.ty===ty)) continue;
+
+      books.push({ tx, ty, collected:false });
+    }
+  }
+
+  function reset(restartTimer=false){
+    buildMap();
+    player.x = 2*TILE;
+    player.y = 2*TILE;
+    player.vx = 0; player.vy = 0;
+    placeBooks();
+    if (restartTimer){
+      startTime = performance.now();
+      lastT = startTime;
+    }
+    running = true;
+  }
+
+  // --- Kolizje ---
+  function isWallAtPixel(px, py){
+    const tx = Math.floor(px / TILE);
+    const ty = Math.floor(py / TILE);
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return true;
+    return map[ty][tx] === 1;
+  }
+
+  function moveWithCollision(dt){
+    const nextX = player.x + player.vx * dt;
+    const nextY = player.y + player.vy * dt;
+
+    // Najpierw X
+    let nx = nextX;
+    if (player.vx !== 0){
+      const left = nx;
+      const right = nx + player.w;
+      const top = player.y;
+      const bottom = player.y + player.h;
+
+      const step = player.vx > 0 ? right : left;
+      // sprawdź rogi
+      if (isWallAtPixel(step, top) || isWallAtPixel(step, bottom)){
+        // dosuń do granicy kafelka
+        const tx = Math.floor(step / TILE);
+        if (player.vx > 0) nx = tx*TILE - player.w - 0.01;
+        else nx = (tx+1)*TILE + 0.01;
+      }
+    }
+
+    // Potem Y
+    let ny = nextY;
+    if (player.vy !== 0){
+      const left = nx;
+      const right = nx + player.w;
+      const top = ny;
+      const bottom = ny + player.h;
+
+      const step = player.vy > 0 ? bottom : top;
+      if (isWallAtPixel(left, step) || isWallAtPixel(right, step)){
+        const ty = Math.floor(step / TILE);
+        if (player.vy > 0) ny = ty*TILE - player.h - 0.01;
+        else ny = (ty+1)*TILE + 0.01;
+      }
+    }
+
+    player.x = nx;
+    player.y = ny;
+  }
+
+  function rectsOverlap(ax,ay,aw,ah, bx,by,bw,bh){
+    return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+  }
+
+  function checkBookPickup(){
+    for (const b of books){
+      if (b.collected) continue;
+      const bx = b.tx*TILE + 2;
+      const by = b.ty*TILE + 2;
+      const bw = 12, bh = 12;
+      if (rectsOverlap(player.x,player.y,player.w,player.h, bx,by,bw,bh)){
+        b.collected = true;
+        score++;
+        scoreEl.textContent = score;
+        if (score >= totalBooks){
+          running = false;
+        }
+      }
+    }
+  }
+
+  // --- Render ---
+  function drawTile(x,y,type){
+    const px = x*TILE, py = y*TILE;
+    if (type === 1){
+      // ściana / regał (pseudo-pixel shading)
+      ctx.fillStyle = "#2a355e";
+      ctx.fillRect(px,py,TILE,TILE);
+      ctx.fillStyle = "#1b2342";
+      ctx.fillRect(px,py,TILE,4);
+      ctx.fillStyle = "#3a4a86";
+      ctx.fillRect(px+2,py+6,TILE-4,2);
+    } else {
+      // podłoga
+      ctx.fillStyle = "#0f1529";
+      ctx.fillRect(px,py,TILE,TILE);
+      // drobny "szum" kratki
+      ctx.fillStyle = ((x+y)&1) ? "#0d1326" : "#101832";
+      ctx.fillRect(px,py,4,4);
+    }
+  }
+
+  function drawBook(b){
+    const x = b.tx*TILE;
+    const y = b.ty*TILE;
+    // okładka
+    ctx.fillStyle = "#f1c40f";
+    ctx.fillRect(x+4,y+4,8,9);
+    // grzbiet
+    ctx.fillStyle = "#d35400";
+    ctx.fillRect(x+4,y+4,2,9);
+    // "kartki"
+    ctx.fillStyle = "#fdf6d8";
+    ctx.fillRect(x+6,y+5,5,7);
+  }
+
+  function drawPlayer(){
+    // cień
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(player.x+2, player.y+10, 10, 4);
+
+    // ciało
+    ctx.fillStyle = "#7bed9f";
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+
+    // oczy
+    ctx.fillStyle = "#0b0e14";
+    ctx.fillRect(player.x+3, player.y+4, 2, 2);
+    ctx.fillRect(player.x+8, player.y+4, 2, 2);
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // mapa
+    for (let y=0;y<MAP_H;y++){
+      for (let x=0;x<MAP_W;x++){
+        drawTile(x,y,map[y][x]);
+      }
+    }
+
+    // książki
+    for (const b of books){
+      if (!b.collected) drawBook(b);
+    }
+
+    // gracz
+    drawPlayer();
+
+    // komunikaty
+    if (!running){
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      ctx.fillStyle = "#e8ecff";
+      ctx.font = "20px system-ui, Arial";
+      ctx.fillText("Wszystkie książki zebrane!", 170, 170);
+      ctx.font = "14px system-ui, Arial";
+      ctx.fillText("Naciśnij R albo kliknij Restart", 210, 200);
+    }
+  }
+
+  function updateInput(){
+    let dx = 0, dy = 0;
+    if (keys.has("w") || keys.has("arrowup")) dy -= 1;
+    if (keys.has("s") || keys.has("arrowdown")) dy += 1;
+    if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
+    if (keys.has("d") || keys.has("arrowright")) dx += 1;
+
+    // normalize, żeby na skos nie było szybciej
+    if (dx !== 0 || dy !== 0){
+      const len = Math.hypot(dx,dy);
+      dx /= len; dy /= len;
+    }
+
+    player.vx = dx * player.speed;
+    player.vy = dy * player.speed;
+  }
+
+  function loop(t){
+    if (!startTime) { startTime = t; lastT = t; }
+    const dt = Math.min(0.033, (t - lastT) / 1000); // cap 33ms
+    lastT = t;
+
+    if (running){
+      updateInput();
+      moveWithCollision(dt);
+      checkBookPickup();
+      timeEl.textContent = ((t - startTime)/1000).toFixed(1);
+    }
+
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  reset(true);
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
