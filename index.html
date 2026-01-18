@@ -33,11 +33,43 @@
     }
     button:hover{ filter:brightness(1.15); }
     .hint{ opacity:.9 }
+
+
+    .title{
+  width: min(1100px, 96vw);
+  margin: 0 auto 12px auto;
+  text-align: center;
+
+  font-weight: 900;
+  letter-spacing: 3px;
+  font-size: clamp(18px, 2.4vw, 28px);
+
+  color: #d0d0d0;              /* szary tekst */
+  text-shadow:
+    -1px -1px 0 #000,
+     1px -1px 0 #000,
+    -1px  1px 0 #000,
+     1px  1px 0 #000,
+     0  3px 14px rgba(0,0,0,.6);
+
+  animation: titlePulse 3.2s ease-in-out infinite;
+}
+
+/* bardzo delikatne pulsowanie */
+@keyframes titlePulse{
+  0%   { transform: scale(1);    opacity: .85; }
+  50%  { transform: scale(1.03); opacity: 1;   }
+  100% { transform: scale(1);    opacity: .85; }
+}
+
   </style>
 </head>
 <body>
   <div class="wrap">
     <div>
+
+      <div class="title">BIBLIOTEKA GŁÓWNA UMCS</div>
+
       <div class="hud">
         <div class="pill"><b>📚 Książki:</b> <span id="score">0</span>/<span id="total">0</span></div>
         <div class="pill"><b>❤️ Życia:</b> <span id="lives">3</span></div>
