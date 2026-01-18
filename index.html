@@ -131,19 +131,22 @@
   // ==========================================================
   //  MAP GENERATION — mniej monotonii: pokoje + korytarze
   // ==========================================================
+function makeEmptyMap(){
+  // Zamiast morza ścian: wszędzie podłoga
+  map = Array.from({length: MAP_H}, () => Array(MAP_W).fill(T_FLOOR));
 
-  function makeEmptyMap(){
-    map = Array.from({length: MAP_H}, () => Array(MAP_W).fill(T_SHELF));
-  }
+  // Ramka z regałów (ściany)
+  for (let x=0;x<MAP_W;x++){ map[0][x]=T_SHELF; map[MAP_H-1][x]=T_SHELF; }
+  for (let y=0;y<MAP_H;y++){ map[y][0]=T_SHELF; map[y][MAP_W-1]=T_SHELF; }
 
-  function carveRoom(x, y, w, h){
-    for (let yy=y; yy<y+h; yy++){
-      for (let xx=x; xx<x+w; xx++){
-        if (xx<=0 || yy<=0 || xx>=MAP_W-1 || yy>=MAP_H-1) continue;
-        map[yy][xx] = T_FLOOR;
-      }
+  // Start zawsze wolny
+  for (let y=1;y<=5;y++){
+    for (let x=1;x<=5;x++){
+      map[y][x] = T_FLOOR;
     }
   }
+}
+
 
   function carveCorridor(x1,y1,x2,y2){
     // L-korytarz (najpierw w poziomie, potem pion)
@@ -165,55 +168,62 @@
     map[y2][x2] = T_FLOOR;
   }
 
-  function generateLibrary(){
-    makeEmptyMap();
+ function generateLibrary(){
+  makeEmptyMap();
 
-    // Stała ramka regałów jest "naturalnie" (bo wszędzie shelves)
-    // Wyrzeźbimy kilka pokoi + połączymy je korytarzami
-    const rooms = [];
-    const ROOM_COUNT = 7;
+  // ===== Regały jako długie pasy z przerwami (czytelny labirynt) =====
+  const bands = [5, 9, 13, 17, 21];
+  for (const by of bands){
+    for (let x=2; x<MAP_W-2; x++){
+      // przerwy = przejścia
+      if (x % 10 === 0 || x % 14 === 0) continue;
 
-    for (let i=0;i<ROOM_COUNT;i++){
-      const w = randInt(7, 12);
-      const h = randInt(5, 9);
-      const x = randInt(2, MAP_W - w - 3);
-      const y = randInt(2, MAP_H - h - 3);
-      carveRoom(x,y,w,h);
-      rooms.push({x,y,w,h, cx: Math.floor(x+w/2), cy: Math.floor(y+h/2)});
+      // grubość 2 kafelki
+      map[by][x] = T_SHELF;
+      if (by+1 < MAP_H-1) map[by+1][x] = T_SHELF;
     }
+  }
 
-    // Połącz pokoje
-    rooms.sort((a,b)=>a.cx-b.cx);
-    for (let i=0;i<rooms.length-1;i++){
-      carveCorridor(rooms[i].cx, rooms[i].cy, rooms[i+1].cx, rooms[i+1].cy);
+  // ===== Pionowe regały (krótsze), żeby nie było monotonnie =====
+  for (let i=0;i<9;i++){
+    const x = randInt(4, MAP_W-5);
+    const y = randInt(2, MAP_H-8);
+    const h = randInt(4,7);
+    for (let yy=y; yy<y+h; yy++){
+      // zostaw czasem dziury
+      if ((yy+i) % 6 === 0) continue;
+      map[yy][x] = T_SHELF;
     }
+  }
 
-    // Dodaj kilka "otwartych" pasów (hala z regałami)
-    // w środku mapy, żeby przypominało bibliotekę
-    const bandYs = [6, 10, 14, 18];
-    for (const by of bandYs){
-      for (let x=2; x<MAP_W-2; x++){
-        // rzadkie przerwy
-        if (x % 9 === 0 || x % 13 === 0) continue;
-        // tylko jeśli okolica jest już podłogą (żeby nie zamurować całych pokoi)
-        if (map[by][x] === T_FLOOR){
-          map[by][x] = T_SHELF;
-          if (by+1 < MAP_H-1 && map[by+1][x] === T_FLOOR) map[by+1][x] = T_SHELF;
-        }
+  // ===== “Pokoje czytelni” (wyraźne open space) =====
+  for (let i=0;i<3;i++){
+    const w = randInt(9, 13);
+    const h = randInt(6, 9);
+    const x = randInt(2, MAP_W - w - 3);
+    const y = randInt(2, MAP_H - h - 3);
+
+    // wyczyść regały w pokoju
+    for (let yy=y; yy<y+h; yy++){
+      for (let xx=x; xx<x+w; xx++){
+        if (xx<=0 || yy<=0 || xx>=MAP_W-1 || yy>=MAP_H-1) continue;
+        map[yy][xx] = T_FLOOR;
       }
     }
+  }
 
-    // Upewnij się, że start jest przechodni
-    carveRoom(1,1,6,6);
+  // ===== Stoły i atrament =====
+  placeTables(16);
+  placeInk(18);
 
-    // Stoły (blokują ruch), rozrzucone w pokojach
-    placeTables(14);
+  // ===== Bezpieczeństwo: nie blokuj startu =====
+  for (let y=1;y<=5;y++){
+    for (let x=1;x<=5;x++){
+      map[y][x] = T_FLOOR;
+    }
+  }
+}
 
-    // Atrament (spowalnia), rozrzucony w korytarzach/pokojach
-    placeInk(16);
-
-    // Drobne "poszerzenia" przejść żeby było arcade-friendly
-    softenChokepoints();
   }
 
   function softenChokepoints(){
