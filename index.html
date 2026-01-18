@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Bibliotekarz Pixel — Arcade Library (pełna wersja)</title>
+  <title>Bibliotekarz Pixel — Arcade Library (stabilna wersja)</title>
   <style>
     :root { color-scheme: dark; }
     body { margin: 0; background:#050906; font-family: system-ui, Arial; }
@@ -51,11 +51,6 @@
 
 <script>
 (() => {
-  // ==========================================================
-  //  Bibliotekarz Pixel — pełniejsza gra: tekstury, AI, przeszkody
-  // ==========================================================
-
-  // ===== Canvas / UI
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
@@ -65,23 +60,15 @@
   const timeEl  = document.getElementById("time");
   document.getElementById("restart").addEventListener("click", () => reset(true));
 
-  // ===== Stałe świata
   const TILE = 24;
-  const MAP_W = 40; // 40*24 = 960
-  const MAP_H = 25; // 25*24 = 600
+  const MAP_W = 40; // 960
+  const MAP_H = 25; // 600
 
-  // Tile IDs:
-  // 0 = podłoga
-  // 1 = regał (ściana)
-  // 2 = atrament (spowalnia)
-  // 3 = stół (blokuje ruch, nie blokuje "wzroku")
   const T_FLOOR = 0, T_SHELF = 1, T_INK = 2, T_TABLE = 3;
 
-  // Balans (arcade)
   const BOOK_COUNT = 16;
   const START_LIVES = 3;
 
-  // ===== Stan gry
   let map = [];
   let books = [];
   let guards = [];
@@ -89,13 +76,11 @@
 
   let score = 0;
   let lives = START_LIVES;
-
   let startTime = 0;
   let lastT = 0;
   let running = true;
   let paused = false;
 
-  // ===== Sterowanie
   const keys = new Set();
   window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
@@ -106,7 +91,6 @@
   });
   window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
-  // ===== Pomocnicze
   function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
   function now(){ return performance.now(); }
@@ -115,7 +99,6 @@
     return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
   }
 
-  // ===== Gracz (bibliotekarz z okularami)
   const player = {
     x: 2*TILE,
     y: 2*TILE,
@@ -128,266 +111,25 @@
     invulnUntil: 0
   };
 
-  // ==========================================================
-  //  MAP GENERATION — mniej monotonii: pokoje + korytarze
-  // ==========================================================
-function makeEmptyMap(){
-  // Zamiast morza ścian: wszędzie podłoga
-  map = Array.from({length: MAP_H}, () => Array(MAP_W).fill(T_FLOOR));
-
-  // Ramka z regałów (ściany)
-  for (let x=0;x<MAP_W;x++){ map[0][x]=T_SHELF; map[MAP_H-1][x]=T_SHELF; }
-  for (let y=0;y<MAP_H;y++){ map[y][0]=T_SHELF; map[y][MAP_W-1]=T_SHELF; }
-
-  // Start zawsze wolny
-  for (let y=1;y<=5;y++){
-    for (let x=1;x<=5;x++){
-      map[y][x] = T_FLOOR;
-    }
-  }
-}
-
-
-  function carveCorridor(x1,y1,x2,y2){
-    // L-korytarz (najpierw w poziomie, potem pion)
-    const dx = Math.sign(x2-x1);
-    const dy = Math.sign(y2-y1);
-
-    let x = x1, y = y1;
-    while (x !== x2){
-      if (x>0 && x<MAP_W-1 && y>0 && y<MAP_H-1) map[y][x] = T_FLOOR;
-      // poszerzenie korytarza o 1 kafelek czasem
-      if ((x+y) % 5 === 0 && y+1 < MAP_H-1) map[y+1][x] = T_FLOOR;
-      x += dx;
-    }
-    while (y !== y2){
-      if (x>0 && x<MAP_W-1 && y>0 && y<MAP_H-1) map[y][x] = T_FLOOR;
-      if ((x+y) % 6 === 0 && x+1 < MAP_W-1) map[y][x+1] = T_FLOOR;
-      y += dy;
-    }
-    map[y2][x2] = T_FLOOR;
-  }
-
- function generateLibrary(){
-  makeEmptyMap();
-
-  // ===== Regały jako długie pasy z przerwami (czytelny labirynt) =====
-  const bands = [5, 9, 13, 17, 21];
-  for (const by of bands){
-    for (let x=2; x<MAP_W-2; x++){
-      // przerwy = przejścia
-      if (x % 10 === 0 || x % 14 === 0) continue;
-
-      // grubość 2 kafelki
-      map[by][x] = T_SHELF;
-      if (by+1 < MAP_H-1) map[by+1][x] = T_SHELF;
-    }
-  }
-
-  // ===== Pionowe regały (krótsze), żeby nie było monotonnie =====
-  for (let i=0;i<9;i++){
-    const x = randInt(4, MAP_W-5);
-    const y = randInt(2, MAP_H-8);
-    const h = randInt(4,7);
-    for (let yy=y; yy<y+h; yy++){
-      // zostaw czasem dziury
-      if ((yy+i) % 6 === 0) continue;
-      map[yy][x] = T_SHELF;
-    }
-  }
-
-  // ===== “Pokoje czytelni” (wyraźne open space) =====
-  for (let i=0;i<3;i++){
-    const w = randInt(9, 13);
-    const h = randInt(6, 9);
-    const x = randInt(2, MAP_W - w - 3);
-    const y = randInt(2, MAP_H - h - 3);
-
-    // wyczyść regały w pokoju
-    for (let yy=y; yy<y+h; yy++){
-      for (let xx=x; xx<x+w; xx++){
-        if (xx<=0 || yy<=0 || xx>=MAP_W-1 || yy>=MAP_H-1) continue;
-        map[yy][xx] = T_FLOOR;
-      }
-    }
-  }
-
-  // ===== Stoły i atrament =====
-  placeTables(16);
-  placeInk(18);
-
-  // ===== Bezpieczeństwo: nie blokuj startu =====
-  for (let y=1;y<=5;y++){
-    for (let x=1;x<=5;x++){
-      map[y][x] = T_FLOOR;
-    }
-  }
-}
-
-  }
-
-  function softenChokepoints(){
-    // Przejdź i jeśli masz wąskie gardło 1-kafelkowe, czasem poszerz
-    for (let y=2; y<MAP_H-2; y++){
-      for (let x=2; x<MAP_W-2; x++){
-        if (map[y][x] !== T_FLOOR) continue;
-        const walls =
-          (map[y-1][x]===T_SHELF) + (map[y+1][x]===T_SHELF) + (map[y][x-1]===T_SHELF) + (map[y][x+1]===T_SHELF);
-        if (walls >= 3 && Math.random() < 0.25){
-          // przebij jedną ścianę obok
-          const dirs = [
-            {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}
-          ];
-          const shuffled = dirs.sort(()=>Math.random()-0.5);
-          for (const d of shuffled){
-            if (map[y+d.dy][x+d.dx] === T_SHELF){
-              map[y+d.dy][x+d.dx] = T_FLOOR;
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  function randomFloorTileFarFrom(tx0,ty0, minManhattan){
-    for (let tries=0; tries<8000; tries++){
-      const tx = randInt(1, MAP_W-2);
-      const ty = randInt(1, MAP_H-2);
-      if (map[ty][tx] !== T_FLOOR) continue;
-      const d = Math.abs(tx-tx0)+Math.abs(ty-ty0);
-      if (d < minManhattan) continue;
-      return {tx,ty};
-    }
-    return {tx:2,ty:2};
-  }
-
-  function placeTables(count){
-    let placed = 0;
-    let tries = 0;
-    while (placed < count && tries < 10000){
-      tries++;
-      const tx = randInt(2, MAP_W-3);
-      const ty = randInt(2, MAP_H-3);
-      if (map[ty][tx] !== T_FLOOR) continue;
-
-      // nie tuż przy starcie
-      if (Math.abs(tx-2)+Math.abs(ty-2) < 7) continue;
-
-      // zostaw przejścia (unikaj zasypania korytarzy)
-      const floorAround =
-        (map[ty-1][tx]===T_FLOOR) + (map[ty+1][tx]===T_FLOOR) + (map[ty][tx-1]===T_FLOOR) + (map[ty][tx+1]===T_FLOOR);
-      if (floorAround <= 1) continue;
-
-      map[ty][tx] = T_TABLE;
-      placed++;
-    }
-  }
-
-  function placeInk(count){
-    let placed = 0;
-    let tries = 0;
-    while (placed < count && tries < 12000){
-      tries++;
-      const tx = randInt(2, MAP_W-3);
-      const ty = randInt(2, MAP_H-3);
-      if (map[ty][tx] !== T_FLOOR) continue;
-      if (Math.abs(tx-2)+Math.abs(ty-2) < 8) continue;
-
-      // preferuj korytarze: tam gdzie jest więcej ścian
-      const walls =
-        (map[ty-1][tx]===T_SHELF) + (map[ty+1][tx]===T_SHELF) + (map[ty][tx-1]===T_SHELF) + (map[ty][tx+1]===T_SHELF);
-      if (walls < 2 && Math.random() < 0.7) continue;
-
-      map[ty][tx] = T_INK;
-      placed++;
-    }
-  }
-
-  // ==========================================================
-  //  ENTITY PLACEMENT — książki i wrogowie
-  // ==========================================================
-
-  function placeBooks(){
-    books = [];
-    score = 0;
-
-    const startTx = 2, startTy = 2;
-    let tries = 0;
-
-    while (books.length < BOOK_COUNT && tries < 20000){
-      tries++;
-      const tx = randInt(1, MAP_W-2);
-      const ty = randInt(1, MAP_H-2);
-      if (map[ty][tx] !== T_FLOOR) continue;
-      if (Math.abs(tx-startTx)+Math.abs(ty-startTy) < 7) continue;
-      if (books.some(b => b.tx===tx && b.ty===ty)) continue;
-
-      books.push({tx,ty,collected:false, bob: Math.random()*Math.PI*2});
-    }
-
-    totalEl.textContent = BOOK_COUNT;
-    scoreEl.textContent = score;
-  }
-
-  // Wrogowie: 3 typy, więcej sztuk, AI bez blokowania:
-  // - normal: średni, często skręca
-  // - fast: szybszy, bardziej agresywny
-  // - scout: wolniejszy, ale większy zasięg "widzenia"
-  function placeGuards(){
-    guards = [];
-
-    const configs = [
-      {type:"normal", speed:125, turniness:0.06, sight:10},
-      {type:"fast",   speed:165, turniness:0.08, sight:9},
-      {type:"scout",  speed:110, turniness:0.05, sight:14},
-    ];
-
-    const GUARD_COUNT = 6; // arcade
-    for (let i=0;i<GUARD_COUNT;i++){
-      const cfg = configs[i % configs.length];
-      const spawn = randomFloorTileFarFrom(2,2, 16);
-
-      guards.push({
-        x: spawn.tx*TILE + 4,
-        y: spawn.ty*TILE + 4,
-        w: 16,
-        h: 16,
-        vx: 0,
-        vy: 0,
-        speed: cfg.speed,
-        type: cfg.type,
-        turniness: cfg.turniness,
-        sight: cfg.sight,
-        dirX: Math.random()<0.5 ? 1 : -1,
-        dirY: 0,
-        stuckFrames: 0,
-        // "alert" podbija presję po zauważeniu gracza
-        alertUntil: 0
-      });
-    }
-  }
-
-  // ==========================================================
-  //  COLLISION / MOVEMENT
-  // ==========================================================
-
+  // ===== Map helpers =====
   function tileAt(tx,ty){
     if (tx<0 || ty<0 || tx>=MAP_W || ty>=MAP_H) return T_SHELF;
     return map[ty][tx];
   }
-
   function tileAtPixel(px,py){
     return tileAt(Math.floor(px/TILE), Math.floor(py/TILE));
   }
-
-  function blocksMovement(tileId){
-    return tileId === T_SHELF || tileId === T_TABLE;
+  function blocksMovement(t){
+    return t === T_SHELF || t === T_TABLE;
   }
-
+  function blocksVision(t){
+    return t === T_SHELF; // stoły nie blokują wzroku
+  }
   function isBlockedAtPixel(px,py){
-    const t = tileAtPixel(px,py);
-    return blocksMovement(t);
+    return blocksMovement(tileAtPixel(px,py));
+  }
+  function isWalkableTile(tx,ty){
+    return !blocksMovement(tileAt(tx,ty));
   }
 
   function moveWithCollision(entity, dt){
@@ -437,69 +179,250 @@ function makeEmptyMap(){
   }
 
   // ==========================================================
-  //  AI — line of sight + inteligentny wybór kierunku (bez zaklinania)
+  //  Generator mapy: baza = PODŁOGA, przeszkody = regały/stoły/atrament
+  //  + BFS walidacja (brak softlocków)
   // ==========================================================
 
-  function isWalkableTile(tx,ty){
-    const t = tileAt(tx,ty);
-    return !blocksMovement(t);
+  function makeEmptyMap(){
+    map = Array.from({length: MAP_H}, () => Array(MAP_W).fill(T_FLOOR));
+
+    // ramka regałów
+    for (let x=0;x<MAP_W;x++){ map[0][x]=T_SHELF; map[MAP_H-1][x]=T_SHELF; }
+    for (let y=0;y<MAP_H;y++){ map[y][0]=T_SHELF; map[y][MAP_W-1]=T_SHELF; }
+
+    // start zawsze czysty
+    for (let y=1;y<=5;y++) for (let x=1;x<=5;x++) map[y][x]=T_FLOOR;
   }
 
-  function hasLineOfSight(ax,ay,bx,by){
-    // Prosta LOS w linii prostej (korytarze/pokoje).
-    // Stoły NIE blokują wzroku, tylko regały.
-    if (ax !== bx && ay !== by) return false;
+  function placeShelves(){
+    // długie pasy regałów z przerwami
+    const bands = [5, 9, 13, 17, 21];
+    for (const by of bands){
+      for (let x=2; x<MAP_W-2; x++){
+        if (x % 10 === 0 || x % 14 === 0) continue;
+        map[by][x] = T_SHELF;
+        if (by+1 < MAP_H-1) map[by+1][x] = T_SHELF;
+      }
+    }
 
+    // pionowe krótsze regały
+    for (let i=0;i<10;i++){
+      const x = randInt(4, MAP_W-5);
+      const y = randInt(2, MAP_H-9);
+      const h = randInt(4,8);
+      for (let yy=y; yy<y+h; yy++){
+        if ((yy+i) % 6 === 0) continue; // dziury
+        map[yy][x] = T_SHELF;
+      }
+    }
+
+    // trzy "czytelnie" (czyste obszary)
+    for (let i=0;i<3;i++){
+      const w = randInt(9, 14);
+      const h = randInt(6, 9);
+      const x = randInt(2, MAP_W - w - 3);
+      const y = randInt(2, MAP_H - h - 3);
+      for (let yy=y; yy<y+h; yy++){
+        for (let xx=x; xx<x+w; xx++){
+          if (xx<=0 || yy<=0 || xx>=MAP_W-1 || yy>=MAP_H-1) continue;
+          map[yy][xx] = T_FLOOR;
+        }
+      }
+    }
+
+    // nie blokuj startu
+    for (let y=1;y<=5;y++) for (let x=1;x<=5;x++) map[y][x]=T_FLOOR;
+  }
+
+  function placeTables(count){
+    let placed = 0, tries = 0;
+    while (placed < count && tries < 20000){
+      tries++;
+      const tx = randInt(2, MAP_W-3);
+      const ty = randInt(2, MAP_H-3);
+      if (map[ty][tx] !== T_FLOOR) continue;
+      if (Math.abs(tx-2)+Math.abs(ty-2) < 7) continue;
+
+      const floorAround =
+        (map[ty-1][tx]===T_FLOOR) + (map[ty+1][tx]===T_FLOOR) + (map[ty][tx-1]===T_FLOOR) + (map[ty][tx+1]===T_FLOOR);
+      if (floorAround <= 1) continue;
+
+      map[ty][tx] = T_TABLE;
+      placed++;
+    }
+  }
+
+  function placeInk(count){
+    let placed = 0, tries = 0;
+    while (placed < count && tries < 25000){
+      tries++;
+      const tx = randInt(2, MAP_W-3);
+      const ty = randInt(2, MAP_H-3);
+      if (map[ty][tx] !== T_FLOOR) continue;
+      if (Math.abs(tx-2)+Math.abs(ty-2) < 9) continue;
+
+      const walls =
+        (map[ty-1][tx]===T_SHELF) + (map[ty+1][tx]===T_SHELF) + (map[ty][tx-1]===T_SHELF) + (map[ty][tx+1]===T_SHELF);
+      if (walls < 2 && Math.random() < 0.75) continue;
+
+      map[ty][tx] = T_INK;
+      placed++;
+    }
+  }
+
+  function randomFloorTileFarFrom(tx0,ty0, minManhattan){
+    for (let tries=0; tries<20000; tries++){
+      const tx = randInt(1, MAP_W-2);
+      const ty = randInt(1, MAP_H-2);
+      if (map[ty][tx] !== T_FLOOR) continue;
+      const d = Math.abs(tx-tx0)+Math.abs(ty-ty0);
+      if (d < minManhattan) continue;
+      return {tx,ty};
+    }
+    return {tx:2,ty:2};
+  }
+
+  function placeBooks(){
+    books = [];
+    score = 0;
+
+    let tries = 0;
+    while (books.length < BOOK_COUNT && tries < 50000){
+      tries++;
+      const tx = randInt(1, MAP_W-2);
+      const ty = randInt(1, MAP_H-2);
+      if (map[ty][tx] !== T_FLOOR) continue;
+      if (Math.abs(tx-2)+Math.abs(ty-2) < 7) continue;
+      if (books.some(b => b.tx===tx && b.ty===ty)) continue;
+      books.push({tx,ty,collected:false,bob:Math.random()*Math.PI*2});
+    }
+
+    totalEl.textContent = BOOK_COUNT;
+    scoreEl.textContent = score;
+  }
+
+  // BFS: ile kafelków floor/ink/table jest osiągalnych z (2,2)?
+  // (ink i floor są chodliwe, table jest blokadą ruchu)
+  function computeReachable(){
+    const q = [];
+    const seen = Array.from({length: MAP_H}, () => Array(MAP_W).fill(false));
+    q.push({x:2,y:2});
+    seen[2][2] = true;
+
+    while(q.length){
+      const n = q.shift();
+      const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+      for (const [dx,dy] of dirs){
+        const nx = n.x + dx, ny = n.y + dy;
+        if (nx<0||ny<0||nx>=MAP_W||ny>=MAP_H) continue;
+        if (seen[ny][nx]) continue;
+        if (!isWalkableTile(nx,ny)) continue;
+        seen[ny][nx] = true;
+        q.push({x:nx,y:ny});
+      }
+    }
+    return seen;
+  }
+
+  function validateNoSoftlock(){
+    const seen = computeReachable();
+    // wszystkie książki muszą być reachable
+    for (const b of books){
+      if (!seen[b.ty][b.tx]) return false;
+    }
+    // start musi być chodliwy
+    return isWalkableTile(2,2);
+  }
+
+  function generateLibrarySafe(){
+    // losuj aż będzie przejściowe (max 50 prób)
+    for (let attempt=0; attempt<50; attempt++){
+      makeEmptyMap();
+      placeShelves();
+      placeTables(16);
+      placeInk(18);
+      placeBooks();
+
+      if (validateNoSoftlock()){
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ==========================================================
+  //  Wrogowie (3 typy) + AI bez blokowania
+  // ==========================================================
+
+  function hasLineOfSight(ax,ay,bx,by){
+    if (ax !== bx && ay !== by) return false;
     const dx = Math.sign(bx-ax);
     const dy = Math.sign(by-ay);
-
     let x = ax, y = ay;
     while (x !== bx || y !== by){
-      // pomijamy pierwszy kafelek (start), ale sprawdzamy po drodze
       if (!(x===ax && y===ay)){
-        if (tileAt(x,y) === T_SHELF) return false; // tylko regał
+        if (blocksVision(tileAt(x,y))) return false;
       }
       x += dx; y += dy;
     }
     return true;
   }
 
-  function chooseNewDirection(guard){
-    const gx = Math.floor(guard.x / TILE);
-    const gy = Math.floor(guard.y / TILE);
-
-    const dirs = [
-      {dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}
-    ];
-
-    // Preferuj kierunki, które nie są cofnięciem (żeby nie drgało),
-    // ale jeśli utknął, pozwól na cokolwiek.
-    const back = {dx:-guard.dirX, dy:-guard.dirY};
+  function chooseNewDirection(g){
+    const gx = Math.floor(g.x / TILE);
+    const gy = Math.floor(g.y / TILE);
+    const dirs = [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}];
+    const back = {dx:-g.dirX, dy:-g.dirY};
 
     const candidates = dirs
       .filter(d => isWalkableTile(gx+d.dx, gy+d.dy))
       .map(d => {
-        // scoring: unikaj cofania, preferuj prosto, plus trochę losowości
-        let score = 0;
+        let s = 0;
         const isBack = (d.dx===back.dx && d.dy===back.dy);
-        const isStraight = (d.dx===guard.dirX && d.dy===guard.dirY);
-
-        if (isStraight) score += 2.0;
-        if (isBack) score -= (guard.stuckFrames > 6 ? 0.2 : 3.0);
-        score += Math.random()*1.25;
-
-        return {d, score};
+        const isStraight = (d.dx===g.dirX && d.dy===g.dirY);
+        if (isStraight) s += 2.0;
+        if (isBack) s -= (g.stuckFrames > 6 ? 0.2 : 3.0);
+        s += Math.random()*1.25;
+        return {d, s};
       })
-      .sort((a,b)=>b.score-a.score);
+      .sort((a,b)=>b.s-a.s);
 
     if (candidates.length){
-      const pick = candidates[0].d;
-      guard.dirX = pick.dx;
-      guard.dirY = pick.dy;
+      g.dirX = candidates[0].d.dx;
+      g.dirY = candidates[0].d.dy;
     } else {
-      // awaryjnie: zawróć
-      guard.dirX = back.dx || 1;
-      guard.dirY = back.dy || 0;
+      g.dirX = back.dx || 1;
+      g.dirY = back.dy || 0;
+    }
+  }
+
+  function placeGuards(){
+    guards = [];
+
+    const configs = [
+      {type:"normal", speed:125, turniness:0.06, sight:10},
+      {type:"fast",   speed:170, turniness:0.08, sight:9},
+      {type:"scout",  speed:115, turniness:0.05, sight:14},
+    ];
+
+    for (let i=0;i<6;i++){
+      const cfg = configs[i % configs.length];
+      const spawn = randomFloorTileFarFrom(2,2, 16);
+      guards.push({
+        x: spawn.tx*TILE + 4,
+        y: spawn.ty*TILE + 4,
+        w: 16,
+        h: 16,
+        vx: 0, vy: 0,
+        speed: cfg.speed,
+        type: cfg.type,
+        turniness: cfg.turniness,
+        sight: cfg.sight,
+        dirX: Math.random()<0.5 ? 1 : -1,
+        dirY: 0,
+        stuckFrames: 0,
+        alertUntil: 0
+      });
     }
   }
 
@@ -511,22 +434,15 @@ function makeEmptyMap(){
       const gx = Math.floor(g.x / TILE);
       const gy = Math.floor(g.y / TILE);
 
-      // "widzenie": w tej samej linii + brak regałów po drodze + dystans
-      const distMan = Math.abs(px-gx) + Math.abs(py-gy);
-      const canSee = distMan <= g.sight && hasLineOfSight(gx,gy,px,py);
-
-      if (canSee){
-        // alert na chwilę — nawet jeśli straci LOS, jeszcze "ciśnie"
-        g.alertUntil = now() + 900;
-      }
+      const dist = Math.abs(px-gx) + Math.abs(py-gy);
+      const canSee = dist <= g.sight && hasLineOfSight(gx,gy,px,py);
+      if (canSee) g.alertUntil = now() + 900;
 
       const alerted = now() < g.alertUntil;
 
-      // jeśli goni, ustaw kierunek na oś z większą różnicą
       if (alerted){
         const dx = px - gx;
         const dy = py - gy;
-
         if (Math.abs(dx) > Math.abs(dy)){
           g.dirX = Math.sign(dx) || g.dirX;
           g.dirY = 0;
@@ -534,28 +450,21 @@ function makeEmptyMap(){
           g.dirY = Math.sign(dy) || g.dirY;
           g.dirX = 0;
         }
-
-        // fast ma lekki boost, scout mniejszy
         const boost = (g.type==="fast") ? 1.12 : (g.type==="scout" ? 1.05 : 1.08);
         g.vx = g.dirX * g.speed * boost;
         g.vy = g.dirY * g.speed * boost;
       } else {
-        // patrol: czasem skręć
-        if (Math.random() < g.turniness){
-          chooseNewDirection(g);
-        }
+        if (Math.random() < g.turniness) chooseNewDirection(g);
         g.vx = g.dirX * g.speed;
         g.vy = g.dirY * g.speed;
       }
 
-      const beforeX = g.x, beforeY = g.y;
+      const bx = g.x, by = g.y;
       moveWithCollision(g, dt);
 
-      // wykryj "utknięcie": prawie brak ruchu
-      const moved = Math.abs(g.x-beforeX) + Math.abs(g.y-beforeY);
+      const moved = Math.abs(g.x-bx) + Math.abs(g.y-by);
       if (moved < 0.02){
         g.stuckFrames++;
-        // natychmiast zmień kierunek, jeśli przyblokowany
         chooseNewDirection(g);
       } else {
         g.stuckFrames = Math.max(0, g.stuckFrames-1);
@@ -564,7 +473,7 @@ function makeEmptyMap(){
   }
 
   // ==========================================================
-  //  GAMEPLAY — zbieranie, trafienia, respawn
+  //  Gameplay: książki, trafienia, respawn, particles
   // ==========================================================
 
   function spawnParticles(x,y, kind){
@@ -594,20 +503,14 @@ function makeEmptyMap(){
   function checkBookPickup(){
     for (const b of books){
       if (b.collected) continue;
-
       const bx = b.tx*TILE + 5;
       const by = b.ty*TILE + 5;
-      const bw = 14, bh = 14;
-
-      if (rectsOverlap(player.x,player.y,player.w,player.h, bx,by,bw,bh)){
+      if (rectsOverlap(player.x,player.y,player.w,player.h, bx,by,14,14)){
         b.collected = true;
         score++;
         scoreEl.textContent = score;
         spawnParticles(bx+7, by+7, "book");
-
-        if (score >= BOOK_COUNT){
-          running = false;
-        }
+        if (score >= BOOK_COUNT) running = false;
       }
     }
   }
@@ -615,32 +518,26 @@ function makeEmptyMap(){
   function respawnPlayer(){
     player.x = 2*TILE;
     player.y = 2*TILE;
-    player.vx = 0;
-    player.vy = 0;
+    player.vx = player.vy = 0;
     player.invulnUntil = now() + 1200;
   }
 
   function checkGuardHits(){
     if (now() < player.invulnUntil) return;
-
     for (const g of guards){
       if (rectsOverlap(player.x,player.y,player.w,player.h, g.x,g.y,g.w,g.h)){
         lives--;
         livesEl.textContent = lives;
         spawnParticles(player.x + player.w/2, player.y + player.h/2, "hit");
-
-        if (lives <= 0){
-          running = false;
-        } else {
-          respawnPlayer();
-        }
+        if (lives <= 0) running = false;
+        else respawnPlayer();
         return;
       }
     }
   }
 
   // ==========================================================
-  //  INPUT / MOVEMENT (Player)
+  //  Player update
   // ==========================================================
 
   function updatePlayer(dt){
@@ -650,7 +547,6 @@ function makeEmptyMap(){
     if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
     if (keys.has("d") || keys.has("arrowright")) dx += 1;
 
-    // normalize (diagonal)
     if (dx !== 0 || dy !== 0){
       const len = Math.hypot(dx,dy);
       dx /= len; dy /= len;
@@ -658,8 +554,6 @@ function makeEmptyMap(){
 
     const sprint = keys.has("shift");
     let speed = player.baseSpeed + (sprint ? player.sprintBonus : 0);
-
-    // atrament spowalnia
     if (playerOnInk()) speed *= 0.55;
 
     player.vx = dx * speed;
@@ -669,41 +563,34 @@ function makeEmptyMap(){
   }
 
   // ==========================================================
-  //  RENDER — ciemnozielona biblioteka + tekstury
+  //  Render (teksturowanie)
   // ==========================================================
 
   function drawFloor(px,py,x,y){
-    // butelkowa zieleń
     ctx.fillStyle = "#0e2a1c";
     ctx.fillRect(px,py,TILE,TILE);
 
-    // faktura płytek
     ctx.fillStyle = ((x+y)&1) ? "#0b2317" : "#123422";
     ctx.fillRect(px+2,py+2,6,6);
 
-    // subtelne "smugi"
-    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
     ctx.fillRect(px+14,py+5,7,2);
     ctx.fillRect(px+5,py+16,9,2);
 
-    // szew kafelka
     ctx.fillStyle = "rgba(0,0,0,0.10)";
     ctx.fillRect(px,py,TILE,1);
     ctx.fillRect(px,py,1,TILE);
   }
 
   function drawShelf(px,py,x,y){
-    // drewno
     ctx.fillStyle = "#3a2716";
     ctx.fillRect(px,py,TILE,TILE);
 
-    // półki
     ctx.fillStyle = "#2a1a10";
     ctx.fillRect(px,py+4,TILE,3);
     ctx.fillRect(px,py+12,TILE,3);
     ctx.fillRect(px,py+20,TILE,2);
 
-    // książki - grzbiety
     const colors = ["#c0392b","#f39c12","#27ae60","#2980b9","#8e44ad","#ecf0f1"];
     for (let i=0;i<4;i++){
       const bx = px + 3 + i*5;
@@ -714,28 +601,23 @@ function makeEmptyMap(){
       ctx.fillRect(bx, by, 1, 6);
     }
 
-    // obramowanie
     ctx.fillStyle = "rgba(0,0,0,0.25)";
     ctx.fillRect(px,py,TILE,2);
     ctx.fillRect(px,py,2,TILE);
   }
 
-  function drawTable(px,py,x,y){
-    // blat
+  function drawTable(px,py){
     ctx.fillStyle = "#5c3b1f";
     ctx.fillRect(px+2, py+6, TILE-4, TILE-10);
-    // nogi
     ctx.fillStyle = "#3b2615";
     ctx.fillRect(px+4, py+16, 3, 6);
     ctx.fillRect(px+TILE-7, py+16, 3, 6);
 
-    // papiery
     ctx.fillStyle = "#f7f1d5";
     ctx.fillRect(px+6, py+8, 8, 6);
     ctx.fillStyle = "rgba(0,0,0,0.12)";
     ctx.fillRect(px+6, py+11, 8, 1);
 
-    // cień
     ctx.fillStyle = "rgba(0,0,0,0.25)";
     ctx.fillRect(px+2, py+TILE-3, TILE-4, 2);
   }
@@ -753,27 +635,21 @@ function makeEmptyMap(){
   function drawBook(b){
     const x = b.tx*TILE;
     const y = b.ty*TILE;
-    // delikatne "bujanie"
     b.bob += 0.08;
     const bob = Math.sin(b.bob) * 1.2;
 
-    // cień
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.fillRect(x+7, y+19, 12, 3);
 
-    // okładka
     ctx.fillStyle = "#f1c40f";
     ctx.fillRect(x+7, y+6 + bob, 12, 14);
 
-    // grzbiet
     ctx.fillStyle = "#d35400";
     ctx.fillRect(x+7, y+6 + bob, 3, 14);
 
-    // kartki
     ctx.fillStyle = "#fff3cf";
     ctx.fillRect(x+10, y+8 + bob, 8, 10);
 
-    // pasek tytułu
     ctx.fillStyle = "rgba(0,0,0,0.25)";
     ctx.fillRect(x+10, y+12 + bob, 8, 2);
   }
@@ -783,39 +659,30 @@ function makeEmptyMap(){
     if (blinking) return;
 
     const px = player.x, py = player.y;
-
-    // cień
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.fillRect(px+3, py+18, 12, 4);
 
-    // nogi
     ctx.fillStyle = "#1abc9c";
     ctx.fillRect(px+3, py+14, 4, 6);
     ctx.fillRect(px+9, py+14, 4, 6);
 
-    // ciało (sweter)
     ctx.fillStyle = "#2ecc71";
     ctx.fillRect(px+2, py+6, 12, 10);
 
-    // głowa
     ctx.fillStyle = "#f1c27d";
     ctx.fillRect(px+4, py, 8, 7);
 
-    // włosy
     ctx.fillStyle = "#2c2c2c";
     ctx.fillRect(px+4, py, 8, 2);
 
-    // okulary
     ctx.fillStyle = "#0b0e14";
     ctx.fillRect(px+4, py+3, 3, 2);
     ctx.fillRect(px+9, py+3, 3, 2);
-    ctx.fillRect(px+7, py+4, 2, 1); // mostek
+    ctx.fillRect(px+7, py+4, 2, 1);
 
-    // uśmiech
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.fillRect(px+7, py+6, 2, 1);
 
-    // książka pod pachą (bibliotekarz vibe)
     ctx.fillStyle = "#f39c12";
     ctx.fillRect(px+13, py+9, 3, 7);
     ctx.fillStyle = "rgba(0,0,0,0.22)";
@@ -823,15 +690,12 @@ function makeEmptyMap(){
   }
 
   function drawGuard(g){
-    // cień
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.fillRect(g.x+2, g.y+14, 12, 4);
 
-    // kolor zależny od typu
-    let body = "#e74c3c";
-    let accent = "#c0392b";
-    if (g.type === "fast"){ body = "#ff6b6b"; accent = "#c44545"; }
-    if (g.type === "scout"){ body = "#9b59b6"; accent = "#7e3f97"; }
+    let body = "#e74c3c", accent="#c0392b";
+    if (g.type === "fast"){ body="#ff6b6b"; accent="#c44545"; }
+    if (g.type === "scout"){ body="#9b59b6"; accent="#7e3f97"; }
 
     ctx.fillStyle = body;
     ctx.fillRect(g.x+2, g.y+2, 12, 12);
@@ -839,12 +703,10 @@ function makeEmptyMap(){
     ctx.fillStyle = accent;
     ctx.fillRect(g.x+2, g.y+10, 12, 4);
 
-    // oczy
     ctx.fillStyle = "#0b0e14";
     ctx.fillRect(g.x+5, g.y+6, 2, 2);
     ctx.fillRect(g.x+10, g.y+6, 2, 2);
 
-    // znacznik "alert" (mała kropka)
     if (now() < g.alertUntil){
       ctx.fillStyle = "#f1c40f";
       ctx.fillRect(g.x+13, g.y+1, 2, 2);
@@ -854,17 +716,16 @@ function makeEmptyMap(){
   function drawParticles(){
     for (const p of particles){
       const a = clamp(p.life / 0.8, 0, 1);
-      if (p.kind === "book") ctx.fillStyle = `rgba(241,196,15,${0.65*a})`;
-      else ctx.fillStyle = `rgba(255,110,110,${0.55*a})`;
+      ctx.fillStyle = (p.kind==="book")
+        ? `rgba(241,196,15,${0.65*a})`
+        : `rgba(255,110,110,${0.55*a})`;
       ctx.fillRect(p.x, p.y, 2, 2);
     }
   }
 
   function drawWorld(){
-    // tło
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // mapa
     for (let y=0; y<MAP_H; y++){
       for (let x=0; x<MAP_W; x++){
         const px = x*TILE, py = y*TILE;
@@ -873,26 +734,16 @@ function makeEmptyMap(){
         else if (t === T_INK) drawInk(px,py,x,y);
         else {
           drawFloor(px,py,x,y);
-          if (t === T_TABLE) drawTable(px,py,x,y);
+          if (t === T_TABLE) drawTable(px,py);
         }
       }
     }
 
-    // książki
-    for (const b of books){
-      if (!b.collected) drawBook(b);
-    }
-
-    // wrogowie
+    for (const b of books) if (!b.collected) drawBook(b);
     for (const g of guards) drawGuard(g);
-
-    // gracz
     drawPlayer();
-
-    // particles
     drawParticles();
 
-    // overlay pauzy / win/lose
     if (paused){
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -906,23 +757,27 @@ function makeEmptyMap(){
     if (!running){
       ctx.fillStyle = "rgba(0,0,0,0.62)";
       ctx.fillRect(0,0,canvas.width,canvas.height);
-
       const win = (score >= BOOK_COUNT);
       ctx.fillStyle = "#eafff2";
       ctx.font = "26px system-ui, Arial";
       ctx.fillText(win ? "Zebrane! Biblioteka uratowana 📚" : "Ciii… Złapany! 🤫", 200, 280);
-
       ctx.font = "15px system-ui, Arial";
       ctx.fillText("Naciśnij R albo kliknij Restart", 350, 315);
     }
   }
 
   // ==========================================================
-  //  RESET / LOOP
+  //  Reset / loop
   // ==========================================================
 
   function reset(restartTimer=false){
-    generateLibrary();
+    // generator gwarantuje brak softlocka
+    const ok = generateLibrarySafe();
+    if (!ok){
+      // awaryjnie: czysta mapa podłogi
+      makeEmptyMap();
+      placeBooks();
+    }
 
     player.x = 2*TILE;
     player.y = 2*TILE;
@@ -932,9 +787,7 @@ function makeEmptyMap(){
     lives = START_LIVES;
     livesEl.textContent = lives;
 
-    placeBooks();
     placeGuards();
-
     particles = [];
 
     if (restartTimer){
@@ -946,27 +799,22 @@ function makeEmptyMap(){
     paused = false;
     running = true;
   }
+  window.reset = reset; // żeby działał przycisk inline, jakbyś go kiedyś użył
 
   function loop(t){
     if (!startTime){ startTime = t; lastT = t; }
-
     const dt = Math.min(0.033, (t - lastT) / 1000);
     lastT = t;
 
     if (running && !paused){
       updatePlayer(dt);
       updateGuards(dt);
-
       checkBookPickup();
       checkGuardHits();
-
       updateParticles(dt);
-
       timeEl.textContent = ((t - startTime)/1000).toFixed(1);
-
       if (lives <= 0) running = false;
     } else {
-      // nawet w pauzie można lekko animować książki (nie trzeba)
       updateParticles(dt * 0.6);
     }
 
@@ -974,7 +822,6 @@ function makeEmptyMap(){
     requestAnimationFrame(loop);
   }
 
-  // Start
   reset(true);
   requestAnimationFrame(loop);
 })();
