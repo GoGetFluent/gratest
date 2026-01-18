@@ -400,10 +400,11 @@
     guards = [];
 
     const configs = [
-      {type:"normal", speed:125, turniness:0.06, sight:10},
-      {type:"fast",   speed:170, turniness:0.08, sight:9},
-      {type:"scout",  speed:115, turniness:0.05, sight:14},
-    ];
+  {type:"normal", speed:105, turniness:0.06, sight:10},
+  {type:"fast",   speed:120, turniness:0.08, sight:9},
+  {type:"scout",  speed:95,  turniness:0.05, sight:14},
+];
+
 
     for (let i=0;i<6;i++){
       const cfg = configs[i % configs.length];
@@ -450,7 +451,8 @@
           g.dirY = Math.sign(dy) || g.dirY;
           g.dirX = 0;
         }
-        const boost = (g.type==="fast") ? 1.12 : (g.type==="scout" ? 1.05 : 1.08);
+       const boost = (g.type==="fast") ? 1.05 : (g.type==="scout" ? 1.02 : 1.04);
+
         g.vx = g.dirX * g.speed * boost;
         g.vy = g.dirY * g.speed * boost;
       } else {
